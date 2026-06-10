@@ -1,0 +1,16 @@
+{
+  "name": "Launch Curtain",
+  "author": "sgarr",
+  "api_version": 1,
+  "flags": [],
+  "publish": {
+    "tags": [
+      "windows",
+      "big-picture",
+      "launcher",
+      "console"
+    ],
+    "description": "A small Windows launch curtain for Steam Big Picture. It hides desktop and launcher flashes while games start.",
+    "image": "assets/launch-curtain.svg"
+  }
+}
