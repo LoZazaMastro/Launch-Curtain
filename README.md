@@ -30,21 +30,6 @@ console.
 - Lets you adjust how long the curtain stays visible after the game is ready.
 - Automatically follows the Steam/Decky UI language when possible.
 
-## Languages
-
-The Decky panel includes automatic translations for:
-
-- English
-- Italian
-- French
-- Spanish
-- Portuguese
-- Brazilian Portuguese
-- German
-- Dutch
-- Ukrainian
-- Chinese
-- Japanese
 
 ## Custom Logo
 
@@ -62,29 +47,3 @@ Download the latest release zip, extract it, and copy the `launch-curtain` folde
 to your Decky Loader plugins folder.
 
 Restart Decky Loader after replacing the folder.
-
-## Notes
-
-Launch Curtain does not enable or change Steam Overlay settings.
-
-It also does not close launchers, edit Steam shortcuts, or change Windows system
-settings. It only displays and hides a loading screen around game launches.
-
-## Development
-
-```powershell
-npm install
-npm run test
-npm run build
-```
-
-The installable plugin files are:
-
-```text
-plugin.json
-package.json
-main.py
-dist/
-helpers/
-assets/
-```
