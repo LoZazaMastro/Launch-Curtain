@@ -334,6 +334,11 @@ function Set-LogoVisual {
         return $false
     }
 
+    if ($Source -match '^https?://') {
+        Write-OverlayLog "$Label skipped remote source to keep launch overlay instant: $Source"
+        return $false
+    }
+
     try {
         $displayWidth = [Math]::Min($screenWidth * 0.42, 720)
         $decodeWidth = [Math]::Max(1, [int][Math]::Min($displayWidth * 2, 1600))
@@ -464,13 +469,21 @@ function Set-WindowNoActivate {
         $SWP_NOMOVE = 0x0002
         $SWP_NOACTIVATE = 0x0010
         $SWP_SHOWWINDOW = 0x0040
+        $SWP_NOOWNERZORDER = 0x0200
+        $SWP_NOSENDCHANGING = 0x0400
+        $SWP_ASYNCWINDOWPOS = 0x4000
 
         $style = [LaunchCurtainXInput]::GetWindowLongPtr($handle, $GWL_EXSTYLE).ToInt64()
         $newStyle = [IntPtr]($style -bor $WS_EX_TOOLWINDOW -bor $WS_EX_NOACTIVATE)
         [LaunchCurtainXInput]::SetWindowLongPtr($handle, $GWL_EXSTYLE, $newStyle) | Out-Null
-        [LaunchCurtainXInput]::SetWindowPos($handle, $HWND_TOPMOST, 0, 0, 0, 0, [uint32]($SWP_NOSIZE -bor $SWP_NOMOVE -bor $SWP_NOACTIVATE -bor $SWP_SHOWWINDOW)) | Out-Null
-        $window.Topmost = $false
-        $window.Topmost = $true
+
+        # Keep the curtain above launcher/splash windows without briefly lowering it.
+        # Repeated WPF Topmost false/true toggles can reveal the windows underneath for a frame.
+        if (-not $window.Topmost) {
+            $window.Topmost = $true
+        }
+        $flags = [uint32]($SWP_NOSIZE -bor $SWP_NOMOVE -bor $SWP_NOACTIVATE -bor $SWP_SHOWWINDOW -bor $SWP_NOOWNERZORDER -bor $SWP_NOSENDCHANGING -bor $SWP_ASYNCWINDOWPOS)
+        [LaunchCurtainXInput]::SetWindowPos($handle, $HWND_TOPMOST, 0, 0, 0, 0, $flags) | Out-Null
     }
     catch {
         # Best effort: the overlay still works even if no-activate styling fails.
@@ -483,7 +496,12 @@ function Refresh-CurtainTopmost {
     }
 
     $now = [DateTime]::UtcNow
-    if (($now - $script:lastTopmostRefresh).TotalMilliseconds -lt 100) {
+    $watchdogMs = 25
+    if (($now - $startedAt).TotalSeconds -gt 12) {
+        $watchdogMs = 90
+    }
+
+    if (($now - $script:lastTopmostRefresh).TotalMilliseconds -lt $watchdogMs) {
         return
     }
 
@@ -521,7 +539,7 @@ function Start-CurtainClose {
 
 $startedAt = [DateTime]::UtcNow
 $timer = New-Object System.Windows.Threading.DispatcherTimer
-$timer.Interval = [TimeSpan]::FromMilliseconds(50)
+$timer.Interval = [TimeSpan]::FromMilliseconds(25)
 $timer.Add_Tick({
     Refresh-CurtainTopmost
     $elapsed = ([DateTime]::UtcNow - $startedAt).TotalSeconds

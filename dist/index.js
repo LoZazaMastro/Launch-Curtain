@@ -965,7 +965,10 @@ class PlayButtonLaunchHook {
         return candidates[0]?.source;
     }
     steamLogoUrl(appId) {
-        return `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/logo.png`;
+        // Remote Steam CDN logos can arrive seconds later and leave the launch
+        // surface as a plain black screen. Prefer local Steam/custom logos and
+        // let the bundled Playhub logo be the instant fallback.
+        return "";
     }
     async resolveGameLogoSource(appId, domSource, isShortcut = false) {
         let backendSource = "";
@@ -982,7 +985,7 @@ class PlayButtonLaunchHook {
             backendSource,
             ...(await this.getSteamLogoSources(appId)),
             domSource,
-            isShortcut ? undefined : this.steamLogoUrl(appId)
+            undefined
         ];
         const source = sources.find((candidate) => Boolean(candidate?.trim()));
         return source ? this.normalizeLogoSource(source) : undefined;
@@ -1033,7 +1036,10 @@ class PlayButtonLaunchHook {
         return this.toFileUrl(this.logoPath) || this.toFileUrl(this.defaultLogoPath);
     }
     normalizeLogoSource(source) {
-        if (/^https?:\/\//i.test(source) || source.startsWith("file://")) {
+        if (/^https?:\/\//i.test(source)) {
+            return "";
+        }
+        if (source.startsWith("file://")) {
             return source;
         }
         return this.toFileUrl(source) || source;
@@ -1100,7 +1106,7 @@ class PlayButtonLaunchHook {
             });
         };
         if (appId) {
-            const initialLogoSource = logoSource || (isShortcut ? undefined : this.steamLogoUrl(appId));
+            const initialLogoSource = logoSource || undefined;
             if (delayMs <= 0) {
                 run(initialLogoSource);
             }
@@ -1324,7 +1330,8 @@ class PlayButtonLaunchHook {
             return;
         }
         const fallbackLogo = isShortcut ? this.fallbackLogoUrl() : this.steamLogoUrl(appId);
-        this.setInstantCurtainLogo(logoSource || fallbackLogo, true);
+        const normalizedLogoSource = logoSource ? this.normalizeLogoSource(logoSource) : "";
+        this.setInstantCurtainLogo(normalizedLogoSource || fallbackLogo, true);
         const token = ++this.prearmLogoToken;
         void this.resolveGameLogoSource(appId, logoSource, isShortcut).then((resolvedLogoSource) => {
             if (token !== this.prearmLogoToken
@@ -1461,8 +1468,10 @@ class PlayButtonLaunchHook {
             this.prearmedInstantAppId = undefined;
             return;
         }
-        const logoUrl = logoSource || (isShortcut ? this.fallbackLogoUrl() : this.steamLogoUrl(appId));
+        const normalizedLogoSource = logoSource ? this.normalizeLogoSource(logoSource) : "";
+        const logoUrl = normalizedLogoSource || (isShortcut ? this.fallbackLogoUrl() : this.steamLogoUrl(appId));
         if (!logoUrl) {
+            this.setInstantCurtainLogo("", true);
             return;
         }
         this.setInstantCurtainLogo(logoUrl, true);
@@ -1505,6 +1514,14 @@ class PlayButtonLaunchHook {
         const logoImage = curtain.querySelector(".launch-curtain-instant__logo-image");
         const fallbackLogo = curtain.querySelector(".launch-curtain-instant__fallback-logo");
         if (logoImage && fallbackLogo) {
+            const src = logoImage.getAttribute("src") || "";
+            const shouldShowFallbackWhileLoading = /^https?:\/\//i.test(src);
+            if (shouldShowFallbackWhileLoading) {
+                fallbackLogo.style.display = "block";
+            }
+            logoImage.addEventListener("load", () => {
+                fallbackLogo.style.display = "none";
+            }, { once: true });
             logoImage.addEventListener("error", () => {
                 logoImage.remove();
                 fallbackLogo.style.display = "block";

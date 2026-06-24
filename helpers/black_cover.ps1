@@ -182,13 +182,21 @@ function Set-BlackCoverNoActivate {
         $SWP_NOMOVE = 0x0002
         $SWP_NOACTIVATE = 0x0010
         $SWP_SHOWWINDOW = 0x0040
+        $SWP_NOOWNERZORDER = 0x0200
+        $SWP_NOSENDCHANGING = 0x0400
+        $SWP_ASYNCWINDOWPOS = 0x4000
 
         $style = [LaunchCurtainBlackCoverNative]::GetWindowLongPtr($handle, $GWL_EXSTYLE).ToInt64()
         $newStyle = [IntPtr]($style -bor $WS_EX_TOOLWINDOW -bor $WS_EX_NOACTIVATE)
         [LaunchCurtainBlackCoverNative]::SetWindowLongPtr($handle, $GWL_EXSTYLE, $newStyle) | Out-Null
-        [LaunchCurtainBlackCoverNative]::SetWindowPos($handle, $HWND_TOPMOST, 0, 0, 0, 0, [uint32]($SWP_NOSIZE -bor $SWP_NOMOVE -bor $SWP_NOACTIVATE -bor $SWP_SHOWWINDOW)) | Out-Null
-        $window.Topmost = $false
-        $window.Topmost = $true
+
+        # Keep the pre-cover above launcher/splash windows without briefly lowering it.
+        # The old WPF Topmost false/true re-raise could expose tiny flashes behind it.
+        if (-not $window.Topmost) {
+            $window.Topmost = $true
+        }
+        $flags = [uint32]($SWP_NOSIZE -bor $SWP_NOMOVE -bor $SWP_NOACTIVATE -bor $SWP_SHOWWINDOW -bor $SWP_NOOWNERZORDER -bor $SWP_NOSENDCHANGING -bor $SWP_ASYNCWINDOWPOS)
+        [LaunchCurtainBlackCoverNative]::SetWindowPos($handle, $HWND_TOPMOST, 0, 0, 0, 0, $flags) | Out-Null
     }
     catch {
     }
@@ -200,7 +208,9 @@ function Refresh-BlackCoverTopmost {
     }
 
     $now = [DateTime]::UtcNow
-    if (($now - $script:lastTopmostRefresh).TotalMilliseconds -lt 750) {
+    # During a game launch Windows may create and destroy splash/launcher windows very quickly.
+    # Refresh topmost frequently while visible, but never toggle Topmost off/on.
+    if (($now - $script:lastTopmostRefresh).TotalMilliseconds -lt 25) {
         return
     }
 
@@ -235,6 +245,7 @@ function Show-BlackCover {
     }
 
     Resize-BlackCover
+    $script:lastTopmostRefresh = [DateTime]::MinValue
     $window.Topmost = $true
     $window.Visibility = [System.Windows.Visibility]::Visible
     $window.Opacity = 1

@@ -25,7 +25,7 @@ import decky
 PLAYHUB_YELLOW = "#FCCC01"
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
-    "settings_version": 12,
+    "settings_version": 13,
     "auto_mode": True,
     "timeout_enabled": False,
     "curtain_timeout": 50,
@@ -69,7 +69,8 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "Battle.net.exe",
         "Agent.exe",
         "RockstarService.exe",
-        "LauncherPatcher.exe"
+        "LauncherPatcher.exe",
+        "GamingServicesUI.exe"
     ]
 }
 
@@ -1825,9 +1826,46 @@ def _focus_window(hwnd: int) -> bool:
     user32.ShowWindow.restype = wintypes.BOOL
     user32.SetForegroundWindow.argtypes = [wintypes.HWND]
     user32.SetForegroundWindow.restype = wintypes.BOOL
+    user32.BringWindowToTop.argtypes = [wintypes.HWND]
+    user32.BringWindowToTop.restype = wintypes.BOOL
+    user32.SetActiveWindow.argtypes = [wintypes.HWND]
+    user32.SetActiveWindow.restype = wintypes.HWND
+    user32.SetFocus.argtypes = [wintypes.HWND]
+    user32.SetFocus.restype = wintypes.HWND
+    user32.GetForegroundWindow.argtypes = []
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+    user32.AttachThreadInput.restype = wintypes.BOOL
+    user32.GetCurrentThreadId.argtypes = []
+    user32.GetCurrentThreadId.restype = wintypes.DWORD
 
-    user32.ShowWindow(hwnd, SW_RESTORE)
-    return bool(user32.SetForegroundWindow(hwnd))
+    foreground = int(user32.GetForegroundWindow() or 0)
+    current_thread = int(user32.GetCurrentThreadId() or 0)
+    foreground_thread = 0
+    if foreground > 0:
+        foreground_thread = int(user32.GetWindowThreadProcessId(foreground, None) or 0)
+    target_thread = int(user32.GetWindowThreadProcessId(hwnd, None) or 0)
+
+    attached_foreground = False
+    attached_target = False
+    try:
+        if foreground_thread and foreground_thread != current_thread:
+            attached_foreground = bool(user32.AttachThreadInput(current_thread, foreground_thread, True))
+        if target_thread and target_thread != current_thread and target_thread != foreground_thread:
+            attached_target = bool(user32.AttachThreadInput(current_thread, target_thread, True))
+
+        user32.ShowWindow(hwnd, SW_RESTORE)
+        user32.BringWindowToTop(hwnd)
+        user32.SetActiveWindow(hwnd)
+        user32.SetFocus(hwnd)
+        return bool(user32.SetForegroundWindow(hwnd))
+    finally:
+        if attached_target:
+            user32.AttachThreadInput(current_thread, target_thread, False)
+        if attached_foreground:
+            user32.AttachThreadInput(current_thread, foreground_thread, False)
 
 
 def _find_steam_window() -> Optional[int]:
@@ -2254,6 +2292,9 @@ class Plugin:
         self.launch_chain_pids: Dict[int, float] = {}
         self.launch_game_candidates: Dict[int, Dict[str, float]] = {}
         self.launch_game_fullscreen_since: Dict[int, float] = {}
+        self.active_game_pids: Dict[int, float] = {}
+        self.pending_steam_refocus_until = 0.0
+        self.last_steam_refocus_attempt_at = 0.0
         self.stale_black_cover_cleanup_done = False
 
     async def _main(self) -> None:
@@ -2530,9 +2571,10 @@ class Plugin:
         }
 
     def _cache_logo_source_for_app(self, app_id: int, include_shortcut_aliases: bool = False, title: str = "") -> Dict[str, Any]:
+        # Cache only local logos. Remote CDN fallbacks are intentionally avoided for
+        # launches because they can block the native overlay while Windows downloads
+        # them. The bundled Playhub logo is the instant fallback.
         logo_source = _find_steam_app_logo(app_id, self.known_processes, include_shortcut_aliases)
-        if not logo_source and not include_shortcut_aliases:
-            logo_source = f"https://cdn.cloudflare.steamstatic.com/steam/apps/{app_id}/logo.png"
 
         cache_entry = {
             "logo_source": logo_source,
@@ -2562,6 +2604,9 @@ class Plugin:
         self.launch_chain_pids = {}
         self.launch_game_candidates = {}
         self.launch_game_fullscreen_since = {}
+        self.active_game_pids = {}
+        self.pending_steam_refocus_until = 0.0
+        self.last_steam_refocus_attempt_at = 0.0
 
     def _is_curtain_running(self) -> bool:
         return self.overlay_process is not None and self.overlay_process.poll() is None
@@ -2796,15 +2841,20 @@ class Plugin:
     def _logo_path(self) -> str:
         if not self.current_launch_show_logo:
             return ""
-        if self.current_launch_logo_path and os.path.exists(self.current_launch_logo_path):
-            return self.current_launch_logo_path
-        if self.current_launch_logo_source:
-            return self.current_launch_logo_source
 
-        custom_logo = str(self.settings.get("custom_logo_path", "")).strip()
-        if custom_logo and os.path.exists(custom_logo):
-            return custom_logo
-        return self._default_logo_path()
+        # Keep the native WPF overlay fast and deterministic. Passing an HTTP/HTTPS
+        # logo to BitmapImage makes PowerShell/WPF wait on the network before it can
+        # hide the black pre-cover, which is exactly the 4-5 second black screen some
+        # users reported. Use only local, WPF-readable images here and fall back
+        # immediately to the bundled logo when a game logo is not already local.
+        for candidate in (
+            self.current_launch_logo_path,
+            str(self.settings.get("custom_logo_path", "")).strip(),
+            self._default_logo_path()
+        ):
+            if candidate and _wpf_supported_image_path(candidate):
+                return candidate
+        return ""
 
     def _powershell_path(self) -> str:
         system_root = os.environ.get("SystemRoot", r"C:\Windows")
@@ -2860,8 +2910,7 @@ class Plugin:
         cached_logo = str(cached_entry.get("logo_source", "") or "") if isinstance(cached_entry, dict) else ""
         logo_source = (
             _find_steam_app_logo(app_id, self.known_processes, is_shortcut)
-            or cached_logo
-            or ("" if is_shortcut else f"https://cdn.cloudflare.steamstatic.com/steam/apps/{app_id}/logo.png")
+            or _local_path_from_logo_source(cached_logo)
         )
         return {
             "ok": True,
@@ -3258,9 +3307,9 @@ class Plugin:
             }
 
         return {
-            "ok": True,
-            "logo_source": f"https://cdn.cloudflare.steamstatic.com/steam/apps/{normalized_app_id}/logo.png",
-            "message": "Using Steam CDN logo."
+            "ok": False,
+            "logo_source": "",
+            "message": "No local Steam logo found; using bundled fallback logo."
         }
 
     async def show_curtain(self, timeout_override: Optional[int] = None) -> Dict[str, Any]:
@@ -3687,6 +3736,7 @@ class Plugin:
 
             self.game_seen_since = 0.0
             self.launch_game_candidates[pid] = {"first_seen": now}
+            self.active_game_pids.setdefault(pid, now)
             _log_info(
                 "Detected launch child "
                 f"process={process_name} "
@@ -3786,6 +3836,87 @@ class Plugin:
             self.launch_black_bridge_release_at = 0.0
             await self.hide_black_cover()
 
+    def _schedule_steam_refocus(self, reason: str) -> None:
+        now = time.time()
+        self.pending_steam_refocus_until = max(self.pending_steam_refocus_until, now + 4.0)
+        self.last_steam_refocus_attempt_at = 0.0
+        _log_info(f"Steam refocus scheduled reason={reason}")
+
+    def _visible_fullscreen_non_steam_window_exists(self) -> bool:
+        try:
+            for window in _visible_windows(limit=40):
+                process = str(window.get("process", "")).lower()
+                hwnd = int(window.get("hwnd", 0) or 0)
+                if process in STEAM_PROCESS_NAMES or process in {"powershell.exe", "pwsh.exe"}:
+                    continue
+                if _window_is_fullscreen(hwnd):
+                    return True
+        except Exception:
+            return False
+        return False
+
+    async def _restore_steam_focus_after_game_exit(self, processes: Dict[int, Dict[str, Any]]) -> None:
+        now = time.time()
+
+        if self.active_game_pids:
+            exited: List[int] = []
+            for pid, first_seen in list(self.active_game_pids.items()):
+                if pid in processes:
+                    # Keep the tracking table bounded for long-running sessions.
+                    if now - first_seen > 12 * 60 * 60:
+                        self.active_game_pids.pop(pid, None)
+                    continue
+
+                self.active_game_pids.pop(pid, None)
+                # Ignore short-lived bootstrap helpers; they often exit while the real
+                # game process is still being created. Real game exits happen after
+                # the process has lived for a few seconds.
+                if now - first_seen >= 8.0:
+                    exited.append(pid)
+
+            if exited:
+                self._schedule_steam_refocus(f"tracked game process exited pids={exited}")
+
+        if self.pending_steam_refocus_until <= 0:
+            return
+        if now >= self.pending_steam_refocus_until:
+            self.pending_steam_refocus_until = 0.0
+            return
+        if self._is_curtain_running() or self.launch_pending_until > now:
+            return
+
+        # Do not steal focus while another tracked game process still has a window.
+        for pid in list(self.active_game_pids.keys()):
+            if pid in processes and _pid_has_visible_window(pid):
+                return
+
+        try:
+            foreground = _foreground_window()
+        except Exception:
+            foreground = {"process": "", "title": "", "hwnd": 0}
+
+        foreground_process = str(foreground.get("process", "")).lower()
+        foreground_title = str(foreground.get("title", "")).lower()
+        if foreground_process in {"steam.exe", "steamwebhelper.exe"} and ("steam" in foreground_title or "big picture" in foreground_title):
+            self.pending_steam_refocus_until = 0.0
+            return
+
+        if self._visible_fullscreen_non_steam_window_exists():
+            return
+
+        if now - self.last_steam_refocus_attempt_at < 0.65:
+            return
+        self.last_steam_refocus_attempt_at = now
+
+        hwnd = _find_steam_window()
+        if hwnd is None:
+            return
+
+        focused = _focus_window(hwnd)
+        _log_info(f"Steam refocus attempt focused={focused} hwnd={hwnd} foreground_process={foreground_process}")
+        if focused:
+            self.pending_steam_refocus_until = 0.0
+
     async def _monitor_foreground(self) -> None:
         launcher_names = {
             str(name).lower()
@@ -3806,6 +3937,7 @@ class Plugin:
                 await self._release_black_bridge_if_no_process()
                 await self._hide_for_settled_process_candidate(processes)
                 await self._hide_expired_launch_curtain()
+                await self._restore_steam_focus_after_game_exit(processes)
 
                 foreground = _foreground_window()
                 process = str(foreground.get("process", "")).lower()
@@ -3822,6 +3954,9 @@ class Plugin:
                 game_settle = float(self.current_launch_game_settle_seconds if self.current_launch_game_settle_seconds is not None else self.settings.get("game_settle_seconds", DEFAULT_SETTINGS["game_settle_seconds"]))
 
                 if self._is_curtain_running() and is_fullscreen_game:
+                    foreground_pid = int(foreground.get("pid", 0) or 0)
+                    if foreground_pid > 0:
+                        self.active_game_pids.setdefault(foreground_pid, time.time())
                     if self.game_seen_since <= 0:
                         self.game_seen_since = time.time()
 
