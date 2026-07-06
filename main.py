@@ -90,6 +90,20 @@ STEAM_PROCESS_NAMES = {
     "steamservice.exe"
 }
 
+NON_GAME_SURFACE_PROCESSES = STEAM_PROCESS_NAMES | {
+    "explorer.exe",
+    "gameoverlayui.exe",
+    "gameoverlayui64.exe",
+    "gamelaunchhelper.exe",
+    "gamingservicesui.exe",
+    "hardwareupdater.exe",
+    "sisr.exe",
+    "steamerrorreporter.exe",
+    "steamerrorreporter64.exe",
+    "viiper.exe",
+    "xboxpctray.exe"
+}
+
 LAUNCHER_TITLE_HINTS = {
     "ea app",
     "electronic arts",
@@ -166,6 +180,18 @@ IGNORED_LAUNCH_CHILDREN = {
     "startmenuexperiencehost.exe",
     "searchapp.exe"
 }
+
+
+def _is_non_game_surface(process_name: str, title: str = "") -> bool:
+    process = str(process_name or "").lower()
+    if process in NON_GAME_SURFACE_PROCESSES:
+        return True
+
+    normalized_title = str(title or "").lower()
+    if process in {"powershell.exe", "pwsh.exe"} and "launch curtain" in normalized_title:
+        return True
+
+    return False
 
 
 class PROCESSENTRY32W(ctypes.Structure):
@@ -1799,6 +1825,17 @@ def _window_is_large_game_surface(hwnd: int) -> bool:
 
 def _pid_has_large_game_window(pid: int) -> bool:
     return any(_window_is_large_game_surface(hwnd) for hwnd in _windows_for_pid(pid, limit=6))
+
+
+def _game_window_for_pid(pid: int) -> Optional[int]:
+    windows = _windows_for_pid(pid, limit=8)
+    for hwnd in windows:
+        if _window_is_fullscreen(hwnd):
+            return hwnd
+    for hwnd in windows:
+        if _window_is_large_game_surface(hwnd):
+            return hwnd
+    return windows[0] if windows else None
 
 
 def _post_close_to_process_windows(pid: int) -> bool:
@@ -3721,7 +3758,7 @@ class Plugin:
 
             self.launch_chain_pids[pid] = now + 45
 
-            if process_name in IGNORED_LAUNCH_CHILDREN:
+            if process_name in IGNORED_LAUNCH_CHILDREN or _is_non_game_surface(process_name):
                 continue
 
             if process_name in launcher_names:
@@ -3768,7 +3805,13 @@ class Plugin:
             if pid in self.launch_game_candidates
         }
 
-        for pid, data in self.launch_game_candidates.items():
+        for pid in list(self.launch_game_candidates.keys()):
+            process_name = str(processes.get(pid, {}).get("process", "")).lower()
+            if _is_non_game_surface(process_name):
+                self.launch_game_candidates.pop(pid, None)
+                self.launch_game_fullscreen_since.pop(pid, None)
+
+        for pid, data in list(self.launch_game_candidates.items()):
             first_seen = float(data.get("first_seen", now))
             if now - first_seen < 0.4:
                 continue
@@ -3794,9 +3837,13 @@ class Plugin:
 
             if visible_long_enough and (fullscreen_long_enough or visible_window_ready):
                 reason = "process candidate reached fullscreen" if fullscreen_long_enough else "process candidate opened a visible game window"
+                game_hwnd = _game_window_for_pid(pid)
+                focused_game = _focus_window(game_hwnd) if game_hwnd else False
                 _log_info(
                     f"Hiding curtain: {reason} "
                     f"pid={pid} "
+                    f"hwnd={game_hwnd or 0} "
+                    f"focused={focused_game} "
                     f"settle_seconds={game_settle} "
                     f"visible_seconds={now - self.last_curtain_started_at:.2f}"
                 )
@@ -3805,6 +3852,10 @@ class Plugin:
                 self.launch_game_candidates = {}
                 self.launch_game_fullscreen_since = {}
                 await self.hide_curtain()
+                if game_hwnd:
+                    await asyncio.sleep(0.15)
+                    focused_after_hide = _focus_window(game_hwnd)
+                    _log_info(f"Game refocus after curtain hide pid={pid} hwnd={game_hwnd} focused={focused_after_hide}")
                 return
 
     async def _hide_expired_launch_curtain(self) -> None:
@@ -3846,8 +3897,9 @@ class Plugin:
         try:
             for window in _visible_windows(limit=40):
                 process = str(window.get("process", "")).lower()
+                title = str(window.get("title", "")).lower()
                 hwnd = int(window.get("hwnd", 0) or 0)
-                if process in STEAM_PROCESS_NAMES or process in {"powershell.exe", "pwsh.exe"}:
+                if process in STEAM_PROCESS_NAMES or _is_non_game_surface(process, title):
                     continue
                 if _window_is_fullscreen(hwnd):
                     return True
@@ -3948,7 +4000,8 @@ class Plugin:
                 is_launcher = process in launcher_names or title_matches_launcher
                 is_overlay = process in {"powershell.exe", "pwsh.exe"} and "launch curtain" in title
                 is_steam = process in {"steam.exe", "steamwebhelper.exe"}
-                looks_like_game = bool(process) and not is_launcher and not is_overlay and not is_steam
+                is_non_game_surface = _is_non_game_surface(process, title)
+                looks_like_game = bool(process) and not is_launcher and not is_overlay and not is_steam and not is_non_game_surface
                 is_fullscreen_game = looks_like_game and _window_is_fullscreen(foreground_hwnd)
                 min_visible = float(self.settings.get("min_visible_seconds", 2))
                 game_settle = float(self.current_launch_game_settle_seconds if self.current_launch_game_settle_seconds is not None else self.settings.get("game_settle_seconds", DEFAULT_SETTINGS["game_settle_seconds"]))
