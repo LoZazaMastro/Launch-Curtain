@@ -1,9 +1,13 @@
 # Playhub | Launch Curtain
 
-Current version: **2.0.0**
-
 Launch Curtain is a Windows-only Decky Loader plugin that hides desktop flashes,
 launchers, and awkward PC windows while a game starts from Steam Big Picture.
+
+<img width="1500" height="844" alt="Screenshot2026-07-1023353" src="https://github.com/user-attachments/assets/8dcaf273-50da-4db1-ad2a-ca172f1627bd" />
+<img width="3840" height="2160" alt="Screenshot 2026-07-10 233227" src="https://github.com/user-attachments/assets/ebffce09-8dc4-4c07-888d-ee0cf3da4f19" />
+<img width="3840" height="2160" alt="Screenshot 2026-07-10 233250" src="https://github.com/user-attachments/assets/3e1b643a-ca99-4a30-8d46-3bb2729c2e5a" />
+<img width="3840" height="2160" alt="Screenshot 2026-07-10 233311" src="https://github.com/user-attachments/assets/aca33002-3f6c-4371-9f78-ac7cf0b008ad" />
+<img width="3840" height="2160" alt="Screenshot 2026-07-10 234043" src="https://github.com/user-attachments/assets/bd466719-61c5-4928-acea-f3144ce1a229" />
 
 ## Launch modes
 
