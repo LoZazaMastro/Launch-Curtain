@@ -1,0 +1,20 @@
+This project was bootstrapped from the Decky Plugin Template and uses the
+standard Decky plugin build/runtime scaffolding.
+
+    Decky Plugin Template
+    Copyright (c) 2022-2024, Steam Deck Homebrew
+    Licensed under the BSD 3-Clause License.
+    https://github.com/SteamDeckHomebrew/decky-plugin-template
+
+All original code in this repository is distributed under the terms stated in
+the accompanying LICENSE file. The attribution above is retained to satisfy the
+BSD 3-Clause notice requirement of the template it is based on.
+
+The two-step PlayStation Store matching workflow was informed by Universal PSN
+Metadata for Playnite. Launch Curtain's implementation is original and targets
+the current PlayStation Store markup.
+
+    Universal PSN Metadata
+    Copyright (c) 2022 XenorPLxx
+    Licensed under the MIT License.
+    https://github.com/XenorPLxx/playnite-metadata-psn-universal

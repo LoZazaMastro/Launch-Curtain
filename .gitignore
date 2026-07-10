@@ -1,0 +1,8 @@
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+*.log
+.DS_Store
+launch-curtain.json
+launch-images/

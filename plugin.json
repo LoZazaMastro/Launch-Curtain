@@ -1,0 +1,16 @@
+{
+  "name": "Launch Curtain",
+  "author": "Andrea Sgarro (ZazaMastro)",
+  "api_version": 1,
+  "flags": [],
+  "publish": {
+    "tags": [
+      "windows",
+      "big-picture",
+      "launcher",
+      "console"
+    ],
+    "description": "A Windows launch curtain for Steam Big Picture with Modern in-Steam and Classic overlay modes.",
+    "image": "assets/launch-curtain.svg"
+  }
+}
