@@ -143,6 +143,10 @@ const I18N = {
         customLogo: "Custom logo",
         logoPickerError: "Could not choose a logo.",
         timeoutEnabled: "Enable timeout",
+        modeAuto: "Auto",
+        forceMode: "Force mode for this game",
+        gameTimeout: "Timeout only for this game",
+        gameTimeoutSeconds: "Timeout duration",
         timeoutHelp: "How long the launch screen can stay visible while waiting for the game to become fullscreen.",
         timeoutDisabledHelp: "When disabled, the launch screen hides only after fullscreen detection or manual close.",
         exitDelay: "Exit delay",
@@ -176,6 +180,10 @@ const I18N = {
         customLogo: "Logo custom",
         logoPickerError: "Non sono riuscito a scegliere un logo.",
         timeoutEnabled: "Attiva timeout",
+        modeAuto: "Automatica",
+        forceMode: "Forza modalita per questo gioco",
+        gameTimeout: "Timeout solo per questo gioco",
+        gameTimeoutSeconds: "Durata timeout",
         timeoutHelp: "Per quanto tempo la schermata di avvio puo restare visibile mentre aspetta che il gioco passi a schermo intero.",
         timeoutDisabledHelp: "Se disattivo, la schermata si chiude solo quando rileva il fullscreen o con la chiusura manuale.",
         exitDelay: "Ritardo uscita",
@@ -3045,9 +3053,9 @@ function GameSettingsPage() {
     const [backdropPreviewUrl, setBackdropPreviewUrl] = SP_REACT.useState("");
     const exitDelayOptions = Array.from({ length: 11 }, (_item, seconds) => ({ data: seconds, label: `${seconds} s` }));
     const forceModeOptions = [
-        { data: "auto", label: strings.modeAuto ?? "Automatica" },
-        { data: "classic", label: strings.modeClassic ?? "Classica" },
-        { data: "modern", label: strings.modeModern ?? "Moderna" }
+        { data: "auto", label: strings.modeAuto ?? I18N.en.modeAuto ?? "Auto" },
+        { data: "classic", label: strings.modeClassic ?? I18N.en.modeClassic ?? "Classic (overlay window)" },
+        { data: "modern", label: strings.modeModern ?? I18N.en.modeModern ?? "Modern (in Steam UI)" }
     ];
     const gameTimeoutOptions = Array.from({ length: 12 }, (_item, index) => (index + 1) * 5).map((seconds) => ({ data: seconds, label: `${seconds} s` }));
     const gameTitle = appNameForId(appId);
@@ -3349,9 +3357,9 @@ function GameSettingsPage() {
         SP_JSX.jsx(SettingsCard, { children: SP_JSX.jsxs(SP_REACT.Fragment, { children: [
             SP_JSX.jsx(DFL.ToggleField, { label: strings.enableForGame, checked: resolved.enabled !== false, disabled: busy || !payload, onChange: (checked) => { void savePartial({ enabled: checked }); } }),
             SP_JSX.jsx(DFL.DropdownItem, { label: strings.exitDelay, rgOptions: exitDelayOptions, selectedOption: selectedExitDelay, disabled: busy || !payload, onChange: (option) => { const value = numericDropdownValue(option); if (value !== undefined) void savePartial({ exit_delay_seconds: value }); } }),
-            SP_JSX.jsx(DFL.DropdownItem, { label: strings.forceMode ?? "Forza modalità per questo gioco", rgOptions: forceModeOptions, selectedOption: (resolved.force_mode || "auto"), disabled: busy || !payload, onChange: (option) => { if (typeof option.data === "string") void savePartial({ force_mode: option.data }); } }),
-            SP_JSX.jsx(DFL.ToggleField, { label: strings.gameTimeout ?? "Timeout solo per questo gioco", checked: resolved.timeout_enabled === true, disabled: busy || !payload, onChange: (checked) => { void savePartial({ timeout_enabled: checked }); } }),
-            SP_JSX.jsx(DFL.DropdownItem, { label: strings.gameTimeoutSeconds ?? "Durata timeout", rgOptions: gameTimeoutOptions, selectedOption: (typeof resolved.timeout_seconds === "number" ? resolved.timeout_seconds : 50), disabled: busy || !payload || resolved.timeout_enabled !== true, onChange: (option) => { const value = numericDropdownValue(option); if (value !== undefined) void savePartial({ timeout_seconds: value }); } })
+            SP_JSX.jsx(DFL.DropdownItem, { label: strings.forceMode ?? I18N.en.forceMode ?? "Force mode for this game", rgOptions: forceModeOptions, selectedOption: (resolved.force_mode || "auto"), disabled: busy || !payload, onChange: (option) => { if (typeof option.data === "string") void savePartial({ force_mode: option.data }); } }),
+            SP_JSX.jsx(DFL.ToggleField, { label: strings.gameTimeout ?? I18N.en.gameTimeout ?? "Timeout only for this game", checked: resolved.timeout_enabled === true, disabled: busy || !payload, onChange: (checked) => { void savePartial({ timeout_enabled: checked }); } }),
+            SP_JSX.jsx(DFL.DropdownItem, { label: strings.gameTimeoutSeconds ?? I18N.en.gameTimeoutSeconds ?? "Timeout duration", rgOptions: gameTimeoutOptions, selectedOption: (typeof resolved.timeout_seconds === "number" ? resolved.timeout_seconds : 50), disabled: busy || !payload || resolved.timeout_enabled !== true, onChange: (option) => { const value = numericDropdownValue(option); if (value !== undefined) void savePartial({ timeout_seconds: value }); } })
         ] }) }),
         SP_JSX.jsxs(DFL.Focusable, { "flow-children": "horizontal", noFocusRing: true, className: "lc-appearance-grid", children: [
             SP_JSX.jsx(SettingsCard, { className: "lc-appearance-card", title: strings.editorTitle, description: strings.logoHelp, children: SP_JSX.jsxs(SP_REACT.Fragment, { children: [
