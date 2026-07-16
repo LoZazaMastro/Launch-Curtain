@@ -1257,7 +1257,14 @@ class PlayButtonLaunchHook {
             const safeOpacity = Math.max(0, Math.min(1, Number(opacity) || 0));
             img.style.setProperty("--lc-backdrop-opacity", resolvedUrl ? String(safeOpacity) : "0");
             if (resolvedUrl) {
-                if (img.getAttribute("src") !== resolvedUrl) img.setAttribute("src", resolvedUrl);
+                if (img.getAttribute("src") !== resolvedUrl) {
+                    img.addEventListener("load", () => {
+                        if (this.instantCurtainVisible) {
+                            this.applyInstantBgZoom(this.currentBackdropAppId, true);
+                        }
+                    }, { once: true });
+                    img.setAttribute("src", resolvedUrl);
+                }
             }
             else {
                 img.removeAttribute("src");
@@ -1335,13 +1342,20 @@ class PlayButtonLaunchHook {
             curtain.querySelectorAll(".launch-curtain-instant__logo-image").forEach((im) => { im.style.filter = filter; });
         }
     }
-    applyInstantBgZoom(appId) {
+    applyInstantBgZoom(appId, restart = false) {
         const on = this.gameSettingsForApp(appId).bg_zoom_enabled === true;
         for (const curtain of this.instantCurtains()) {
             const img = curtain.querySelector(".launch-curtain-instant__backdrop");
             if (!img) continue;
-            if (on) img.classList.add("launch-curtain-instant__backdrop--zoom");
-            else img.classList.remove("launch-curtain-instant__backdrop--zoom");
+            if (!on) {
+                img.classList.remove("launch-curtain-instant__backdrop--zoom");
+                continue;
+            }
+            if (restart) {
+                img.classList.remove("launch-curtain-instant__backdrop--zoom");
+                img.getBoundingClientRect();
+            }
+            img.classList.add("launch-curtain-instant__backdrop--zoom");
         }
     }
     syncModernCurtainSurfaces() {
@@ -1411,7 +1425,7 @@ class PlayButtonLaunchHook {
             curtain.getBoundingClientRect();
         }
         this.applyInstantBackdrop(this.currentBackdropAppId);
-        this.applyInstantBgZoom(this.currentBackdropAppId);
+        this.applyInstantBgZoom(this.currentBackdropAppId, true);
         this.applyInstantLogoPlacement(this.gameSettingsForApp(this.currentBackdropAppId));
         this.instantCurtainTransitionFrame = window.requestAnimationFrame(() => {
             this.instantCurtainTransitionFrame = undefined;
