@@ -13,9 +13,9 @@ export function initLaunchInfo() {
     try { scaLog("LAUNCHINFO GameAction keys=" + Object.keys(A.Apps).filter(function (k) { return /GameAction/i.test(k); }).join(",")); } catch (e) {}
     let logged = 0;
     const dbg = function (t) { try { if (logged < 40) { logged++; scaLog(t); } } catch (e) {} };
-    const send = function (t) {
+    const send = function (t, phase) {
       const text = String(t == null ? "" : t);
-      try { setLaunchStatus(text); } catch (e) {}
+      try { setLaunchStatus(phase ? { text, phase } : text); } catch (e) {}
       try { playButtonHook.setInstantStatus(text); } catch (e) {}
     };
     const humanize = function (s) {
@@ -65,13 +65,14 @@ export function initLaunchInfo() {
         if (Object.prototype.hasOwnProperty.call(TASKMAP, value)) mapped = TASKMAP[value];
         if (/[A-Za-z]/.test(value)) textish = value;
       }
-      if (mapped !== null) send(mapped);
+      const completed = args.some(function (value) { return value === "Completed" || value === "Done"; });
+      if (mapped !== null) send(mapped, completed ? "complete" : undefined);
       else if (textish) send(humanize(textish));
     };
     if (typeof A.Apps.RegisterForGameActionStart === "function") {
       A.Apps.RegisterForGameActionStart(function () {
         dbg("GA_START " + JSON.stringify(Array.prototype.slice.call(arguments)));
-        send(strings.launchStarting);
+        send(strings.launchStarting, "start");
       });
     }
     if (typeof A.Apps.RegisterForGameActionTaskChange === "function") {
@@ -80,7 +81,7 @@ export function initLaunchInfo() {
     if (typeof A.Apps.RegisterForGameActionEnd === "function") {
       A.Apps.RegisterForGameActionEnd(function () {
         dbg("GA_END " + JSON.stringify(Array.prototype.slice.call(arguments)));
-        send(strings.launchWaitingGame);
+        send(strings.launchWaitingGame, "complete");
       });
     }
     if (typeof A.Apps.RegisterForGameActionShowError === "function") {

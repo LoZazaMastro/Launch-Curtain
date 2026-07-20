@@ -39,6 +39,8 @@ class PlayButtonLaunchHook {
         this.currentBackdropSource = "";
         this.currentBackdropResolvedUrl = "";
         this.currentBackdropOpacity = 0;
+        this.instantAnimationEpoch = 0;
+        this.instantAnimationStartedAt = 0;
         this.gameRunning = false;
         this.uiMode = undefined;
         this.handlePointerDown = (event) => {
@@ -155,8 +157,13 @@ class PlayButtonLaunchHook {
     setSettingsCache(settings) {
         this.settingsCache = settings || {};
         if (this.currentBackdropAppId) {
+            const gameSettings = this.gameSettingsForApp(this.currentBackdropAppId);
             this.applyInstantBackdrop(this.currentBackdropAppId);
             this.applyInstantLogoShadow(this.currentBackdropAppId);
+            if (gameSettings.show_logo === false) {
+                this.logoPreviewToken += 1;
+                this.setInstantCurtainLogo("", false);
+            }
         }
     }
     gameSettingsForApp(appId) {
@@ -191,6 +198,11 @@ class PlayButtonLaunchHook {
         const immediateAppId = this.findAppIdForEvent(target, path);
         if (immediateAppId && !this.isGameEnabled(immediateAppId)) {
             return;
+        }
+        const immediateSettings = this.gameSettingsForApp(immediateAppId);
+        if (immediateAppId && immediateSettings.show_logo === false) {
+            this.logoPreviewToken += 1;
+            this.setInstantCurtainLogo("", false);
         }
         this.showNativeBlackCover(reason, LAUNCH_BRIDGE_COVER_MS);
         this.revealInstantCurtain(PROBATION_COVER_MS);
@@ -778,6 +790,7 @@ class PlayButtonLaunchHook {
     scheduleBackendLaunch(reason, appId, logoSource, delayMs = 0, isShortcut = false, confirmedLaunch = false) {
         this.clearPendingBackendLaunch();
         const token = ++this.backendLaunchToken;
+        const showLogo = this.gameSettingsForApp(appId).show_logo !== false;
         const run = (resolvedLogoSource) => {
             if (token !== this.backendLaunchToken) {
                 return;
@@ -801,12 +814,15 @@ class PlayButtonLaunchHook {
             });
         };
         if (appId) {
-            const initialLogoSource = logoSource || undefined;
+            const initialLogoSource = showLogo ? (logoSource || undefined) : undefined;
             if (delayMs <= 0) {
                 run(initialLogoSource);
             }
             else {
                 this.backendLaunchTimer = window.setTimeout(() => run(initialLogoSource), delayMs);
+            }
+            if (!showLogo) {
+                return;
             }
             void this.resolveGameLogoSource(appId, logoSource, isShortcut).then((resolvedLogoSource) => {
                 if (token !== this.backendLaunchToken) {
@@ -1040,7 +1056,7 @@ class PlayButtonLaunchHook {
         .launch-curtain-instant--art-visible .launch-curtain-instant__backdrop {
           opacity: var(--lc-backdrop-opacity, 1);
         }
-        @keyframes launch-curtain-bg-zoom { from { transform: scale(1.05); } to { transform: scale(1); } }
+        @keyframes launch-curtain-bg-zoom { from { transform: scale(1.06); } to { transform: scale(1); } }
         .launch-curtain-instant__backdrop--zoom {
           animation: launch-curtain-bg-zoom 12s ease-out forwards;
           transform-origin: center center;
@@ -1197,7 +1213,20 @@ class PlayButtonLaunchHook {
             stack.style.top = `${y}%`;
             stack.style.transform = `translate(-50%, -50%) scale(${scale})`;
             stack.querySelectorAll(".launch-curtain-instant__logo-image, .launch-curtain-instant__logo").forEach((logo) => {
-                logo.style.animation = zoomEnabled ? "launch-curtain-logo-zoom 18s ease-out forwards" : "none";
+                if (!zoomEnabled) {
+                    logo.style.animation = "none";
+                    logo.style.animationDelay = "";
+                    delete logo.dataset.lcAnimationEpoch;
+                    return;
+                }
+                const epoch = String(this.instantAnimationEpoch);
+                if (logo.dataset.lcAnimationEpoch === epoch) {
+                    return;
+                }
+                const elapsed = Math.max(0, Date.now() - this.instantAnimationStartedAt);
+                logo.style.animation = "launch-curtain-logo-zoom 18s ease-out forwards";
+                logo.style.animationDelay = `${-Math.min(elapsed, 18000)}ms`;
+                logo.dataset.lcAnimationEpoch = epoch;
             });
         }
     }
@@ -1260,7 +1289,7 @@ class PlayButtonLaunchHook {
                 if (img.getAttribute("src") !== resolvedUrl) {
                     img.addEventListener("load", () => {
                         if (this.instantCurtainVisible) {
-                            this.applyInstantBgZoom(this.currentBackdropAppId, true);
+                            this.applyInstantBgZoom(this.currentBackdropAppId);
                         }
                     }, { once: true });
                     img.setAttribute("src", resolvedUrl);
@@ -1349,13 +1378,22 @@ class PlayButtonLaunchHook {
             if (!img) continue;
             if (!on) {
                 img.classList.remove("launch-curtain-instant__backdrop--zoom");
+                img.style.animationDelay = "";
+                delete img.dataset.lcAnimationEpoch;
                 continue;
             }
-            if (restart) {
+            const epoch = String(this.instantAnimationEpoch);
+            if (!restart && img.dataset.lcAnimationEpoch === epoch) {
+                continue;
+            }
+            if (restart && img.dataset.lcAnimationEpoch !== epoch) {
                 img.classList.remove("launch-curtain-instant__backdrop--zoom");
                 img.getBoundingClientRect();
             }
+            const elapsed = Math.max(0, Date.now() - this.instantAnimationStartedAt);
+            img.style.animationDelay = `${-Math.min(elapsed, 12000)}ms`;
             img.classList.add("launch-curtain-instant__backdrop--zoom");
+            img.dataset.lcAnimationEpoch = epoch;
         }
     }
     syncModernCurtainSurfaces() {
@@ -1413,7 +1451,12 @@ class PlayButtonLaunchHook {
             window.cancelAnimationFrame(this.instantCurtainTransitionFrame);
             this.instantCurtainTransitionFrame = undefined;
         }
+        const wasVisible = this.instantCurtainVisible;
         this.instantCurtainVisible = true;
+        if (!wasVisible) {
+            this.instantAnimationEpoch += 1;
+            this.instantAnimationStartedAt = Date.now();
+        }
         const curtains = this.instantCurtains();
         this.dbg("modern surfaces=" + curtains.length);
         for (const curtain of curtains) {
@@ -1567,14 +1610,25 @@ class PlayButtonLaunchHook {
     setInstantCurtainLogo(logoUrl, showLogo = true) {
         this.currentInstantLogoUrl = logoUrl || "";
         this.currentInstantShowLogo = showLogo !== false;
+        const desiredUrl = this.currentInstantLogoUrl;
+        const desiredVisible = this.currentInstantShowLogo;
         for (const curtain of this.instantCurtains()) {
             const slot = curtain.querySelector(".launch-curtain-instant__logo-slot");
             if (!slot) continue;
-            slot.innerHTML = showLogo ? this.logoMarkup(logoUrl) : "";
+            if (
+                slot.dataset.lcLogoUrl === desiredUrl
+                && slot.dataset.lcLogoVisible === String(desiredVisible)
+            ) {
+                continue;
+            }
+            slot.innerHTML = desiredVisible ? this.logoMarkup(desiredUrl) : "";
+            slot.dataset.lcLogoUrl = desiredUrl;
+            slot.dataset.lcLogoVisible = String(desiredVisible);
             this.wireInstantLogoFallback(curtain);
         }
+        this.applyInstantLogoPlacement(this.gameSettingsForApp(this.currentBackdropAppId));
         this.applyInstantLogoShadow(this.currentBackdropAppId);
-        this.preloadLogo(logoUrl);
+        this.preloadLogo(desiredUrl);
     }
     refreshPreparedFallback() {
         if (this.instantCurtainVisible || this.prearmedInstantAppId) {
@@ -1680,14 +1734,14 @@ class PlayButtonLaunchHook {
                 }
             }
             this.gamepadLaunchPressed = confirmPressed;
-            this.gamepadLaunchFrame = window.requestAnimationFrame(poll);
+            this.gamepadLaunchTimer = window.setTimeout(poll, 50);
         };
-        this.gamepadLaunchFrame = window.requestAnimationFrame(poll);
+        this.gamepadLaunchTimer = window.setTimeout(poll, 50);
     }
     stopGamepadLaunchPolling() {
-        if (this.gamepadLaunchFrame !== undefined) {
-            window.cancelAnimationFrame(this.gamepadLaunchFrame);
-            this.gamepadLaunchFrame = undefined;
+        if (this.gamepadLaunchTimer !== undefined) {
+            window.clearTimeout(this.gamepadLaunchTimer);
+            this.gamepadLaunchTimer = undefined;
         }
         this.gamepadLaunchPressed = false;
     }

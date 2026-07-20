@@ -88,6 +88,34 @@ function FaTheaterMasks (props) {
 }
 
 
+function FaDownload (props) {
+  return GenIcon({"tag":"svg","attr":{"viewBox":"0 0 512 512"},"child":[{"tag":"path","attr":{"d":"M216 0h80c13.3 0 24 10.7 24 24v168h87.7c17.8 0 26.7 21.5 14.1 34.1L269.7 378.3c-7.5 7.5-19.8 7.5-27.3 0L90.1 226.1c-12.6-12.6-3.7-34.1 14.1-34.1H192V24c0-13.3 10.7-24 24-24zm296 376v112c0 13.3-10.7 24-24 24H24c-13.3 0-24-10.7-24-24V376c0-13.3 10.7-24 24-24h146.7l49 49c20.1 20.1 52.5 20.1 72.6 0l49-49H488c13.3 0 24 10.7 24 24zm-124 88c0-11-9-20-20-20s-20 9-20 20 9 20 20 20 20-9 20-20zm64 0c0-11-9-20-20-20s-20 9-20 20 9 20 20 20 20-9 20-20z"},"child":[]}]})(props);
+};
+
+function FaFolderOpen (props) {
+  return GenIcon({"tag":"svg","attr":{"viewBox":"0 0 576 512"},"child":[{"tag":"path","attr":{"d":"M572.694 292.093L500.27 416.248A63.997 63.997 0 0 1 444.989 448H45.025c-18.523 0-30.064-20.093-20.731-36.093l72.424-124.155A64 64 0 0 1 152 256h399.964c18.523 0 30.064 20.093 20.73 36.093zM152 224h328v-48c0-26.51-21.49-48-48-48H272l-64-64H48C21.49 64 0 85.49 0 112v278.046l69.077-118.418C86.214 242.25 117.989 224 152 224z"},"child":[]}]})(props);
+};
+
+function FaImage (props) {
+  return GenIcon({"tag":"svg","attr":{"viewBox":"0 0 512 512"},"child":[{"tag":"path","attr":{"d":"M464 448H48c-26.51 0-48-21.49-48-48V112c0-26.51 21.49-48 48-48h416c26.51 0 48 21.49 48 48v288c0 26.51-21.49 48-48 48zM112 120c-30.928 0-56 25.072-56 56s25.072 56 56 56 56-25.072 56-56-25.072-56-56-56zM64 384h384V272l-87.515-87.515c-4.686-4.686-12.284-4.686-16.971 0L208 320l-55.515-55.515c-4.686-4.686-12.284-4.686-16.971 0L64 336v48z"},"child":[]}]})(props);
+};
+
+function FaRocket (props) {
+  return GenIcon({"tag":"svg","attr":{"viewBox":"0 0 512 512"},"child":[{"tag":"path","attr":{"d":"M505.12019,19.09375c-1.18945-5.53125-6.65819-11-12.207-12.1875C460.716,0,435.507,0,410.40747,0,307.17523,0,245.26909,55.20312,199.05238,128H94.83772c-16.34763.01562-35.55658,11.875-42.88664,26.48438L2.51562,253.29688A28.4,28.4,0,0,0,0,264a24.00867,24.00867,0,0,0,24.00582,24H127.81618l-22.47457,22.46875c-11.36521,11.36133-12.99607,32.25781,0,45.25L156.24582,406.625c11.15623,11.1875,32.15619,13.15625,45.27726,0l22.47457-22.46875V488a24.00867,24.00867,0,0,0,24.00581,24,28.55934,28.55934,0,0,0,10.707-2.51562l98.72834-49.39063c14.62888-7.29687,26.50776-26.5,26.50776-42.85937V312.79688c72.59753-46.3125,128.03493-108.40626,128.03493-211.09376C512.07526,76.5,512.07526,51.29688,505.12019,19.09375ZM384.04033,168A40,40,0,1,1,424.05,128,40.02322,40.02322,0,0,1,384.04033,168Z"},"child":[]}]})(props);
+};
+
+function FaTools (props) {
+  return GenIcon({"tag":"svg","attr":{"viewBox":"0 0 512 512"},"child":[{"tag":"path","attr":{"d":"M501.1 395.7L384 278.6c-23.1-23.1-57.6-27.6-85.4-13.9L192 158.1V96L64 0 0 64l96 128h62.1l106.6 106.6c-13.6 27.8-9.2 62.3 13.9 85.4l117.1 117.1c14.6 14.6 38.2 14.6 52.7 0l52.7-52.7c14.5-14.6 14.5-38.2 0-52.7zM331.7 225c28.3 0 54.9 11 74.9 31l19.4 19.4c15.8-6.9 30.8-16.5 43.8-29.5 37.1-37.1 49.7-89.3 37.9-136.7-2.2-9-13.5-12.1-20.1-5.5l-74.4 74.4-67.9-11.3L334 98.9l74.4-74.4c6.6-6.6 3.4-17.9-5.7-20.2-47.4-11.7-99.6.9-136.6 37.9-28.5 28.5-41.9 66.1-41.2 103.6l82.1 82.1c8.1-1.9 16.5-2.9 24.7-2.9zm-103.9 82l-56.7-56.7L18.7 402.8c-25 25-25 65.5 0 90.5s65.5 25 90.5 0l123.6-123.6c-7.6-19.9-9.9-41.6-5-62.7zM64 472c-13.2 0-24-10.8-24-24 0-13.3 10.7-24 24-24s24 10.7 24 24c0 13.2-10.7 24-24 24z"},"child":[]}]})(props);
+};
+
+function FaTrashAlt (props) {
+  return GenIcon({"tag":"svg","attr":{"viewBox":"0 0 448 512"},"child":[{"tag":"path","attr":{"d":"M32 464a48 48 0 0 0 48 48h288a48 48 0 0 0 48-48V128H32zm272-256a16 16 0 0 1 32 0v224a16 16 0 0 1-32 0zm-96 0a16 16 0 0 1 32 0v224a16 16 0 0 1-32 0zm-96 0a16 16 0 0 1 32 0v224a16 16 0 0 1-32 0zM432 32H312l-9.4-18.7A24 24 0 0 0 281.1 0H166.8a23.72 23.72 0 0 0-21.4 13.3L136 32H16A16 16 0 0 0 0 48v32a16 16 0 0 0 16 16h416a16 16 0 0 0 16-16V48a16 16 0 0 0-16-16z"},"child":[]}]})(props);
+};
+
+function FaUndo (props) {
+  return GenIcon({"tag":"svg","attr":{"viewBox":"0 0 512 512"},"child":[{"tag":"path","attr":{"d":"M212.333 224.333H12c-6.627 0-12-5.373-12-12V12C0 5.373 5.373 0 12 0h48c6.627 0 12 5.373 12 12v78.112C117.773 39.279 184.26 7.47 258.175 8.007c136.906.994 246.448 111.623 246.157 248.532C504.041 393.258 393.12 504 256.333 504c-64.089 0-122.496-24.313-166.51-64.215-5.099-4.622-5.334-12.554-.467-17.42l33.967-33.967c4.474-4.474 11.662-4.717 16.401-.525C170.76 415.336 211.58 432 256.333 432c97.268 0 176-78.716 176-176 0-97.267-78.716-176-176-176-58.496 0-110.28 28.476-142.274 72.333h98.274c6.627 0 12 5.373 12 12v48c0 6.627-5.373 12-12 12z"},"child":[]}]})(props);
+};
+
 
 // Callable esposte dal backend Python (main.py). Ricostruito dal dist.
 const getSettings = callable("get_settings");
@@ -475,6 +503,87 @@ const EXTRA_STRINGS = {
         launchStarting: "Avvio del gioco...", launchCheckingLicense: "Verifica della licenza...", launchCheckingFiles: "Verifica dei file di gioco...", launchInstallingComponents: "Installazione dei componenti necessari...", launchSyncingCloud: "Sincronizzazione di Steam Cloud...", launchSyncingStats: "Sincronizzazione delle statistiche...", launchSyncingController: "Caricamento della configurazione controller...", launchPreparing: "Preparazione dell'avvio...", launchDelayed: "Avvio ritardato...", launchWaitingConfirmation: "In attesa di conferma...", launchWaitingGame: "In attesa del gioco...", launchUpdating: "Aggiornamento del gioco..."
     }
 };
+
+const EXTRA_TRANSLATIONS = {
+    fr: {
+        timeoutEnabled: "Activer le délai d'expiration", modeAuto: "Automatique", forceMode: "Forcer le mode", gameTimeout: "Délai du jeu", gameTimeoutSeconds: "Délai du jeu (secondes)", timeoutHelp: "Masque automatiquement le rideau lorsque le délai expire.", timeoutDisabledHelp: "Le rideau reste affiché jusqu'à la détection du jeu.", exitDelay: "Délai de sortie", exitDelayHelp: "Maintient le rideau visible un peu plus longtemps après la détection du jeu.",
+        maintenance: "Maintenance", refreshGameCache: "Actualiser le cache des jeux", deleteUnusedImages: "Supprimer les images inutilisées",
+        downloadPlayStationAssets: "Télécharger les ressources PlayStation", removePlayStationAssets: "Supprimer les ressources PlayStation", downloadingPlayStationAssets: "Téléchargement des ressources PlayStation", removingPlayStationAssets: "Suppression des ressources PlayStation", playStationBulkApplied: "Appliquées", playStationBulkRemoved: "Supprimées", playStationBulkSkipped: "Ignorées", playStationBulkFailed: "Échecs", playStationBulkError: "L'opération groupée PlayStation n'a pas pu être terminée",
+        tabGame: "Jeu", tabAppearance: "Apparence", tabScrapers: "Sources", gameBehavior: "Comportement de Launch Curtain", gameBehaviorHelp: "Choisissez le comportement de Launch Curtain pour ce jeu.", enableForGame: "Activer Launch Curtain pour ce jeu",
+        logoHelp: "Gérez le logo du jeu et ouvrez l'éditeur visuel.", showLogo: "Afficher le logo", openEditor: "Ouvrir l'éditeur", logoZoom: "Activer l'animation de zoom avant du logo", bgZoom: "Activer l'animation de zoom arrière de l'arrière-plan",
+        launchImage: "Image de lancement", noLaunchImage: "Aucune image de lancement sélectionnée", chooseLaunchImage: "Choisir une image de lancement plein écran", clearLaunchImage: "Supprimer l'image de lancement",
+        editorTitle: "Éditeur", close: "Fermer", saving: "Enregistrement...", editorSaveFailed: "Impossible d'enregistrer les paramètres de l'éditeur.", backgroundOpacity: "Opacité de l'arrière-plan", logoShadowOpacity: "Opacité de l'ombre du logo", logoShadowBlur: "Flou de l'ombre du logo", up: "Haut", down: "Bas", left: "Gauche", right: "Droite", reset: "Réinitialiser", smaller: "Réduire", bigger: "Agrandir", cancel: "Annuler", save: "Enregistrer",
+        downloadBackgrounds: "Télécharger des arrière-plans", scrapers: "Sources d'arrière-plans", scrapersHelp: "Choisissez une source, recherchez le jeu, puis sélectionnez un arrière-plan.", searchQuery: "Texte à rechercher", search: "Rechercher", searching: "Recherche...", download: "Télécharger",
+        searchPlayStation: "Rechercher sur le PlayStation Store", searchingPlayStation: "Recherche sur le PlayStation Store...", choosePlayStationGame: "Choisissez le jeu PlayStation correspondant.", playStationGame: "Jeu PlayStation", viewBackgrounds: "Voir les arrière-plans", loading: "Chargement...", backToResults: "Retour aux résultats", readingBackgrounds: "Lecture des arrière-plans pour", chooseBackground: "Choisissez un arrière-plan PlayStation.", noBackgrounds: "Aucun arrière-plan adapté trouvé.", noPlayStationGames: "Aucun jeu trouvé sur le PlayStation Store.",
+        background: "Arrière-plan", gameWallpaper: "Fond d'écran du jeu", enterSearchQuery: "Saisissez un texte à rechercher.", searchFailed: "La recherche n'a pas pu être terminée.", gameTitleUnavailable: "Impossible de lire le titre du jeu depuis Steam.", imagesFound: "Images trouvées.", noImagesFound: "Aucune image trouvée.", imageDownloaded: "Image de lancement téléchargée.", imageDownloadFailed: "Impossible de télécharger l'image.", chooseFileNotFolder: "Choisissez un fichier, pas un dossier.", imagePickerFailed: "Impossible de choisir l'image de lancement.", noGameSelected: "Aucun jeu sélectionné.",
+        launchStarting: "Démarrage du jeu...", launchCheckingLicense: "Vérification de la licence...", launchCheckingFiles: "Vérification des fichiers du jeu...", launchInstallingComponents: "Installation des composants requis...", launchSyncingCloud: "Synchronisation de Steam Cloud...", launchSyncingStats: "Synchronisation des statistiques...", launchSyncingController: "Chargement de la configuration de la manette...", launchPreparing: "Préparation du lancement...", launchDelayed: "Lancement retardé...", launchWaitingConfirmation: "En attente de confirmation...", launchWaitingGame: "En attente du jeu...", launchUpdating: "Mise à jour du jeu..."
+    },
+    es: {
+        timeoutEnabled: "Activar tiempo de espera", modeAuto: "Automático", forceMode: "Forzar modo", gameTimeout: "Tiempo de espera del juego", gameTimeoutSeconds: "Tiempo de espera del juego (segundos)", timeoutHelp: "Oculta automáticamente la cortina cuando se agota el tiempo.", timeoutDisabledHelp: "La cortina permanece visible hasta que se detecta el juego.", exitDelay: "Retraso de salida", exitDelayHelp: "Mantiene la cortina visible un poco más después de detectar el juego.",
+        maintenance: "Mantenimiento", refreshGameCache: "Actualizar caché de juegos", deleteUnusedImages: "Eliminar imágenes sin usar", downloadPlayStationAssets: "Descargar recursos de PlayStation", removePlayStationAssets: "Eliminar recursos de PlayStation", downloadingPlayStationAssets: "Descargando recursos de PlayStation", removingPlayStationAssets: "Eliminando recursos de PlayStation", playStationBulkApplied: "Aplicados", playStationBulkRemoved: "Eliminados", playStationBulkSkipped: "Omitidos", playStationBulkFailed: "Fallidos", playStationBulkError: "No se pudo completar la operación por lotes de PlayStation",
+        tabGame: "Juego", tabAppearance: "Apariencia", tabScrapers: "Fuentes", gameBehavior: "Comportamiento de Launch Curtain", gameBehaviorHelp: "Elige cómo se comportará Launch Curtain con este juego.", enableForGame: "Activar Launch Curtain para este juego", logoHelp: "Controla el logotipo del juego y abre el editor visual.", showLogo: "Mostrar logotipo", openEditor: "Abrir editor", logoZoom: "Activar animación de acercamiento del logotipo", bgZoom: "Activar animación de alejamiento del fondo",
+        launchImage: "Imagen de inicio", noLaunchImage: "No hay ninguna imagen de inicio seleccionada", chooseLaunchImage: "Elegir imagen de inicio a pantalla completa", clearLaunchImage: "Quitar imagen de inicio", editorTitle: "Editor", close: "Cerrar", saving: "Guardando...", editorSaveFailed: "No se pudieron guardar los ajustes del editor.", backgroundOpacity: "Opacidad del fondo", logoShadowOpacity: "Opacidad de la sombra del logotipo", logoShadowBlur: "Desenfoque de la sombra del logotipo", up: "Arriba", down: "Abajo", left: "Izquierda", right: "Derecha", reset: "Restablecer", smaller: "Más pequeño", bigger: "Más grande", cancel: "Cancelar", save: "Guardar",
+        downloadBackgrounds: "Descargar fondos", scrapers: "Fuentes de fondos", scrapersHelp: "Elige una fuente, busca el juego y selecciona un fondo.", searchQuery: "Texto de búsqueda", search: "Buscar", searching: "Buscando...", download: "Descargar", searchPlayStation: "Buscar en PlayStation Store", searchingPlayStation: "Buscando en PlayStation Store...", choosePlayStationGame: "Elige el juego de PlayStation correspondiente.", playStationGame: "Juego de PlayStation", viewBackgrounds: "Ver fondos", loading: "Cargando...", backToResults: "Volver a los resultados", readingBackgrounds: "Leyendo fondos para", chooseBackground: "Elige un fondo de PlayStation.", noBackgrounds: "No se encontraron fondos adecuados.", noPlayStationGames: "No se encontraron juegos en PlayStation Store.",
+        background: "Fondo", gameWallpaper: "Fondo del juego", enterSearchQuery: "Introduce un texto de búsqueda.", searchFailed: "No se pudo completar la búsqueda.", gameTitleUnavailable: "No se pudo leer el título del juego desde Steam.", imagesFound: "Imágenes encontradas.", noImagesFound: "No se encontraron imágenes.", imageDownloaded: "Imagen de inicio descargada.", imageDownloadFailed: "No se pudo descargar la imagen.", chooseFileNotFolder: "Elige un archivo, no una carpeta.", imagePickerFailed: "No se pudo elegir la imagen de inicio.", noGameSelected: "No hay ningún juego seleccionado.", launchStarting: "Iniciando juego...", launchCheckingLicense: "Comprobando licencia...", launchCheckingFiles: "Comprobando archivos del juego...", launchInstallingComponents: "Instalando componentes necesarios...", launchSyncingCloud: "Sincronizando Steam Cloud...", launchSyncingStats: "Sincronizando estadísticas...", launchSyncingController: "Cargando configuración del mando...", launchPreparing: "Preparando el inicio...", launchDelayed: "Inicio retrasado...", launchWaitingConfirmation: "Esperando confirmación...", launchWaitingGame: "Esperando al juego...", launchUpdating: "Actualizando juego..."
+    },
+    de: {
+        timeoutEnabled: "Zeitlimit aktivieren", modeAuto: "Automatisch", forceMode: "Modus erzwingen", gameTimeout: "Spiel-Zeitlimit", gameTimeoutSeconds: "Spiel-Zeitlimit (Sekunden)", timeoutHelp: "Blendet den Vorhang nach Ablauf des Zeitlimits automatisch aus.", timeoutDisabledHelp: "Der Vorhang bleibt sichtbar, bis das Spiel erkannt wird.", exitDelay: "Ausblendverzögerung", exitDelayHelp: "Lässt den Vorhang nach der Spielerkennung etwas länger sichtbar.",
+        maintenance: "Wartung", refreshGameCache: "Spiele-Cache aktualisieren", deleteUnusedImages: "Ungenutzte Bilder löschen", downloadPlayStationAssets: "PlayStation-Assets herunterladen", removePlayStationAssets: "PlayStation-Assets entfernen", downloadingPlayStationAssets: "PlayStation-Assets werden heruntergeladen", removingPlayStationAssets: "PlayStation-Assets werden entfernt", playStationBulkApplied: "Angewendet", playStationBulkRemoved: "Entfernt", playStationBulkSkipped: "Übersprungen", playStationBulkFailed: "Fehlgeschlagen", playStationBulkError: "Der PlayStation-Sammelvorgang konnte nicht abgeschlossen werden",
+        tabGame: "Spiel", tabAppearance: "Darstellung", tabScrapers: "Quellen", gameBehavior: "Verhalten von Launch Curtain", gameBehaviorHelp: "Lege fest, wie sich Launch Curtain bei diesem Spiel verhält.", enableForGame: "Launch Curtain für dieses Spiel aktivieren", logoHelp: "Verwalte das Spiellogo und öffne den visuellen Editor.", showLogo: "Logo anzeigen", openEditor: "Editor öffnen", logoZoom: "Einzoom-Animation des Logos aktivieren", bgZoom: "Auszoom-Animation des Hintergrunds aktivieren",
+        launchImage: "Startbild", noLaunchImage: "Kein Startbild ausgewählt", chooseLaunchImage: "Vollbild-Startbild auswählen", clearLaunchImage: "Startbild entfernen", editorTitle: "Editor", close: "Schließen", saving: "Speichern...", editorSaveFailed: "Die Editor-Einstellungen konnten nicht gespeichert werden.", backgroundOpacity: "Hintergrunddeckkraft", logoShadowOpacity: "Deckkraft des Logoschattens", logoShadowBlur: "Unschärfe des Logoschattens", up: "Oben", down: "Unten", left: "Links", right: "Rechts", reset: "Zurücksetzen", smaller: "Kleiner", bigger: "Größer", cancel: "Abbrechen", save: "Speichern",
+        downloadBackgrounds: "Hintergründe herunterladen", scrapers: "Hintergrundquellen", scrapersHelp: "Wähle eine Quelle, suche nach dem Spiel und wähle anschließend einen Hintergrund.", searchQuery: "Suchbegriff", search: "Suchen", searching: "Suche...", download: "Herunterladen", searchPlayStation: "Im PlayStation Store suchen", searchingPlayStation: "PlayStation Store wird durchsucht...", choosePlayStationGame: "Wähle das passende PlayStation-Spiel.", playStationGame: "PlayStation-Spiel", viewBackgrounds: "Hintergründe anzeigen", loading: "Laden...", backToResults: "Zurück zu den Ergebnissen", readingBackgrounds: "Hintergründe werden gelesen für", chooseBackground: "Wähle einen PlayStation-Hintergrund.", noBackgrounds: "Keine passenden Hintergründe gefunden.", noPlayStationGames: "Keine Spiele im PlayStation Store gefunden.",
+        background: "Hintergrund", gameWallpaper: "Spielhintergrund", enterSearchQuery: "Gib einen Suchbegriff ein.", searchFailed: "Die Suche konnte nicht abgeschlossen werden.", gameTitleUnavailable: "Der Spieltitel konnte nicht aus Steam gelesen werden.", imagesFound: "Bilder gefunden.", noImagesFound: "Keine Bilder gefunden.", imageDownloaded: "Startbild heruntergeladen.", imageDownloadFailed: "Das Bild konnte nicht heruntergeladen werden.", chooseFileNotFolder: "Wähle eine Datei, keinen Ordner.", imagePickerFailed: "Das Startbild konnte nicht ausgewählt werden.", noGameSelected: "Kein Spiel ausgewählt.", launchStarting: "Spiel wird gestartet...", launchCheckingLicense: "Lizenz wird geprüft...", launchCheckingFiles: "Spieldateien werden geprüft...", launchInstallingComponents: "Erforderliche Komponenten werden installiert...", launchSyncingCloud: "Steam Cloud wird synchronisiert...", launchSyncingStats: "Statistiken werden synchronisiert...", launchSyncingController: "Controller-Konfiguration wird geladen...", launchPreparing: "Start wird vorbereitet...", launchDelayed: "Start verzögert...", launchWaitingConfirmation: "Warten auf Bestätigung...", launchWaitingGame: "Warten auf das Spiel...", launchUpdating: "Spiel wird aktualisiert..."
+    },
+    pt: {
+        timeoutEnabled: "Ativar tempo limite", modeAuto: "Automático", forceMode: "Forçar modo", gameTimeout: "Tempo limite do jogo", gameTimeoutSeconds: "Tempo limite do jogo (segundos)", timeoutHelp: "Oculta automaticamente a cortina quando o tempo limite termina.", timeoutDisabledHelp: "A cortina permanece visível até o jogo ser detetado.", exitDelay: "Atraso de saída", exitDelayHelp: "Mantém a cortina visível por mais algum tempo depois de detetar o jogo.",
+        maintenance: "Manutenção", refreshGameCache: "Atualizar cache de jogos", deleteUnusedImages: "Eliminar imagens não utilizadas", downloadPlayStationAssets: "Transferir recursos PlayStation", removePlayStationAssets: "Remover recursos PlayStation", downloadingPlayStationAssets: "A transferir recursos PlayStation", removingPlayStationAssets: "A remover recursos PlayStation", playStationBulkApplied: "Aplicados", playStationBulkRemoved: "Removidos", playStationBulkSkipped: "Ignorados", playStationBulkFailed: "Falharam", playStationBulkError: "Não foi possível concluir a operação em lote da PlayStation",
+        tabGame: "Jogo", tabAppearance: "Aspeto", tabScrapers: "Fontes", gameBehavior: "Comportamento do Launch Curtain", gameBehaviorHelp: "Escolha como o Launch Curtain se comporta neste jogo.", enableForGame: "Ativar Launch Curtain neste jogo", logoHelp: "Controle o logótipo do jogo e abra o editor visual.", showLogo: "Mostrar logótipo", openEditor: "Abrir editor", logoZoom: "Ativar animação de aproximação do logótipo", bgZoom: "Ativar animação de afastamento do fundo",
+        launchImage: "Imagem de arranque", noLaunchImage: "Nenhuma imagem de arranque selecionada", chooseLaunchImage: "Escolher imagem de arranque em ecrã inteiro", clearLaunchImage: "Remover imagem de arranque", editorTitle: "Editor", close: "Fechar", saving: "A guardar...", editorSaveFailed: "Não foi possível guardar as definições do editor.", backgroundOpacity: "Opacidade do fundo", logoShadowOpacity: "Opacidade da sombra do logótipo", logoShadowBlur: "Desfoque da sombra do logótipo", up: "Cima", down: "Baixo", left: "Esquerda", right: "Direita", reset: "Repor", smaller: "Menor", bigger: "Maior", cancel: "Cancelar", save: "Guardar",
+        downloadBackgrounds: "Transferir fundos", scrapers: "Fontes de fundos", scrapersHelp: "Escolha uma fonte, procure o jogo e selecione um fundo.", searchQuery: "Texto de pesquisa", search: "Pesquisar", searching: "A pesquisar...", download: "Transferir", searchPlayStation: "Pesquisar na PlayStation Store", searchingPlayStation: "A pesquisar na PlayStation Store...", choosePlayStationGame: "Escolha o jogo PlayStation correspondente.", playStationGame: "Jogo PlayStation", viewBackgrounds: "Ver fundos", loading: "A carregar...", backToResults: "Voltar aos resultados", readingBackgrounds: "A ler fundos para", chooseBackground: "Escolha um fundo PlayStation.", noBackgrounds: "Não foram encontrados fundos adequados.", noPlayStationGames: "Não foram encontrados jogos na PlayStation Store.",
+        background: "Fundo", gameWallpaper: "Fundo do jogo", enterSearchQuery: "Introduza um texto de pesquisa.", searchFailed: "Não foi possível concluir a pesquisa.", gameTitleUnavailable: "Não foi possível ler o título do jogo no Steam.", imagesFound: "Imagens encontradas.", noImagesFound: "Nenhuma imagem encontrada.", imageDownloaded: "Imagem de arranque transferida.", imageDownloadFailed: "Não foi possível transferir a imagem.", chooseFileNotFolder: "Escolha um ficheiro, não uma pasta.", imagePickerFailed: "Não foi possível escolher a imagem de arranque.", noGameSelected: "Nenhum jogo selecionado.", launchStarting: "A iniciar o jogo...", launchCheckingLicense: "A verificar a licença...", launchCheckingFiles: "A verificar os ficheiros do jogo...", launchInstallingComponents: "A instalar os componentes necessários...", launchSyncingCloud: "A sincronizar o Steam Cloud...", launchSyncingStats: "A sincronizar estatísticas...", launchSyncingController: "A carregar a configuração do comando...", launchPreparing: "A preparar o arranque...", launchDelayed: "Arranque atrasado...", launchWaitingConfirmation: "A aguardar confirmação...", launchWaitingGame: "A aguardar o jogo...", launchUpdating: "A atualizar o jogo..."
+    },
+    "pt-br": {
+        timeoutEnabled: "Ativar tempo limite", modeAuto: "Automático", forceMode: "Forçar modo", gameTimeout: "Tempo limite do jogo", gameTimeoutSeconds: "Tempo limite do jogo (segundos)", timeoutHelp: "Oculta automaticamente a cortina quando o tempo limite termina.", timeoutDisabledHelp: "A cortina permanece visível até o jogo ser detectado.", exitDelay: "Atraso de saída", exitDelayHelp: "Mantém a cortina visível por mais algum tempo depois de detectar o jogo.",
+        maintenance: "Manutenção", refreshGameCache: "Atualizar cache de jogos", deleteUnusedImages: "Excluir imagens não utilizadas", downloadPlayStationAssets: "Baixar recursos do PlayStation", removePlayStationAssets: "Remover recursos do PlayStation", downloadingPlayStationAssets: "Baixando recursos do PlayStation", removingPlayStationAssets: "Removendo recursos do PlayStation", playStationBulkApplied: "Aplicados", playStationBulkRemoved: "Removidos", playStationBulkSkipped: "Ignorados", playStationBulkFailed: "Falharam", playStationBulkError: "Não foi possível concluir a operação em lote do PlayStation",
+        tabGame: "Jogo", tabAppearance: "Aparência", tabScrapers: "Fontes", gameBehavior: "Comportamento do Launch Curtain", gameBehaviorHelp: "Escolha como o Launch Curtain se comporta neste jogo.", enableForGame: "Ativar Launch Curtain neste jogo", logoHelp: "Controle o logotipo do jogo e abra o editor visual.", showLogo: "Mostrar logotipo", openEditor: "Abrir editor", logoZoom: "Ativar animação de aproximação do logotipo", bgZoom: "Ativar animação de afastamento do fundo",
+        launchImage: "Imagem de inicialização", noLaunchImage: "Nenhuma imagem de inicialização selecionada", chooseLaunchImage: "Escolher imagem de inicialização em tela cheia", clearLaunchImage: "Remover imagem de inicialização", editorTitle: "Editor", close: "Fechar", saving: "Salvando...", editorSaveFailed: "Não foi possível salvar as configurações do editor.", backgroundOpacity: "Opacidade do fundo", logoShadowOpacity: "Opacidade da sombra do logotipo", logoShadowBlur: "Desfoque da sombra do logotipo", up: "Cima", down: "Baixo", left: "Esquerda", right: "Direita", reset: "Redefinir", smaller: "Menor", bigger: "Maior", cancel: "Cancelar", save: "Salvar",
+        downloadBackgrounds: "Baixar fundos", scrapers: "Fontes de fundos", scrapersHelp: "Escolha uma fonte, pesquise o jogo e selecione um fundo.", searchQuery: "Texto de pesquisa", search: "Pesquisar", searching: "Pesquisando...", download: "Baixar", searchPlayStation: "Pesquisar na PlayStation Store", searchingPlayStation: "Pesquisando na PlayStation Store...", choosePlayStationGame: "Escolha o jogo PlayStation correspondente.", playStationGame: "Jogo PlayStation", viewBackgrounds: "Ver fundos", loading: "Carregando...", backToResults: "Voltar aos resultados", readingBackgrounds: "Lendo fundos para", chooseBackground: "Escolha um fundo do PlayStation.", noBackgrounds: "Nenhum fundo adequado encontrado.", noPlayStationGames: "Nenhum jogo encontrado na PlayStation Store.",
+        background: "Fundo", gameWallpaper: "Papel de parede do jogo", enterSearchQuery: "Digite um texto de pesquisa.", searchFailed: "Não foi possível concluir a pesquisa.", gameTitleUnavailable: "Não foi possível ler o título do jogo no Steam.", imagesFound: "Imagens encontradas.", noImagesFound: "Nenhuma imagem encontrada.", imageDownloaded: "Imagem de inicialização baixada.", imageDownloadFailed: "Não foi possível baixar a imagem.", chooseFileNotFolder: "Escolha um arquivo, não uma pasta.", imagePickerFailed: "Não foi possível escolher a imagem de inicialização.", noGameSelected: "Nenhum jogo selecionado.", launchStarting: "Iniciando o jogo...", launchCheckingLicense: "Verificando a licença...", launchCheckingFiles: "Verificando os arquivos do jogo...", launchInstallingComponents: "Instalando os componentes necessários...", launchSyncingCloud: "Sincronizando o Steam Cloud...", launchSyncingStats: "Sincronizando estatísticas...", launchSyncingController: "Carregando a configuração do controle...", launchPreparing: "Preparando a inicialização...", launchDelayed: "Inicialização atrasada...", launchWaitingConfirmation: "Aguardando confirmação...", launchWaitingGame: "Aguardando o jogo...", launchUpdating: "Atualizando o jogo..."
+    },
+    nl: {
+        timeoutEnabled: "Time-out inschakelen", modeAuto: "Automatisch", forceMode: "Modus forceren", gameTimeout: "Time-out voor spel", gameTimeoutSeconds: "Time-out voor spel (seconden)", timeoutHelp: "Verbergt het gordijn automatisch wanneer de time-out verloopt.", timeoutDisabledHelp: "Het gordijn blijft zichtbaar totdat het spel is gedetecteerd.", exitDelay: "Afsluitvertraging", exitDelayHelp: "Houdt het gordijn iets langer zichtbaar nadat het spel is gedetecteerd.",
+        maintenance: "Onderhoud", refreshGameCache: "Spelcache vernieuwen", deleteUnusedImages: "Ongebruikte afbeeldingen verwijderen", downloadPlayStationAssets: "PlayStation-assets downloaden", removePlayStationAssets: "PlayStation-assets verwijderen", downloadingPlayStationAssets: "PlayStation-assets downloaden", removingPlayStationAssets: "PlayStation-assets verwijderen", playStationBulkApplied: "Toegepast", playStationBulkRemoved: "Verwijderd", playStationBulkSkipped: "Overgeslagen", playStationBulkFailed: "Mislukt", playStationBulkError: "De PlayStation-bulkbewerking kon niet worden voltooid",
+        tabGame: "Spel", tabAppearance: "Uiterlijk", tabScrapers: "Bronnen", gameBehavior: "Gedrag van Launch Curtain", gameBehaviorHelp: "Kies hoe Launch Curtain zich voor dit spel gedraagt.", enableForGame: "Launch Curtain inschakelen voor dit spel", logoHelp: "Beheer het spellogo en open de visuele editor.", showLogo: "Logo tonen", openEditor: "Editor openen", logoZoom: "Inzoomanimatie van logo inschakelen", bgZoom: "Uitzoomanimatie van achtergrond inschakelen",
+        launchImage: "Startafbeelding", noLaunchImage: "Geen startafbeelding geselecteerd", chooseLaunchImage: "Startafbeelding op volledig scherm kiezen", clearLaunchImage: "Startafbeelding verwijderen", editorTitle: "Editor", close: "Sluiten", saving: "Opslaan...", editorSaveFailed: "De editorinstellingen konden niet worden opgeslagen.", backgroundOpacity: "Dekking van achtergrond", logoShadowOpacity: "Dekking van logoschaduw", logoShadowBlur: "Vervaging van logoschaduw", up: "Omhoog", down: "Omlaag", left: "Links", right: "Rechts", reset: "Herstellen", smaller: "Kleiner", bigger: "Groter", cancel: "Annuleren", save: "Opslaan",
+        downloadBackgrounds: "Achtergronden downloaden", scrapers: "Achtergrondbronnen", scrapersHelp: "Kies een bron, zoek het spel en selecteer daarna een achtergrond.", searchQuery: "Zoekterm", search: "Zoeken", searching: "Zoeken...", download: "Downloaden", searchPlayStation: "Zoeken in PlayStation Store", searchingPlayStation: "Zoeken in PlayStation Store...", choosePlayStationGame: "Kies het overeenkomende PlayStation-spel.", playStationGame: "PlayStation-spel", viewBackgrounds: "Achtergronden bekijken", loading: "Laden...", backToResults: "Terug naar resultaten", readingBackgrounds: "Achtergronden lezen voor", chooseBackground: "Kies een PlayStation-achtergrond.", noBackgrounds: "Geen geschikte achtergronden gevonden.", noPlayStationGames: "Geen spellen gevonden in PlayStation Store.",
+        background: "Achtergrond", gameWallpaper: "Spelachtergrond", enterSearchQuery: "Voer een zoekterm in.", searchFailed: "De zoekopdracht kon niet worden voltooid.", gameTitleUnavailable: "De speltitel kon niet uit Steam worden gelezen.", imagesFound: "Afbeeldingen gevonden.", noImagesFound: "Geen afbeeldingen gevonden.", imageDownloaded: "Startafbeelding gedownload.", imageDownloadFailed: "De afbeelding kon niet worden gedownload.", chooseFileNotFolder: "Kies een bestand, geen map.", imagePickerFailed: "De startafbeelding kon niet worden gekozen.", noGameSelected: "Geen spel geselecteerd.", launchStarting: "Spel starten...", launchCheckingLicense: "Licentie controleren...", launchCheckingFiles: "Spelbestanden controleren...", launchInstallingComponents: "Vereiste onderdelen installeren...", launchSyncingCloud: "Steam Cloud synchroniseren...", launchSyncingStats: "Statistieken synchroniseren...", launchSyncingController: "Controllerconfiguratie laden...", launchPreparing: "Start voorbereiden...", launchDelayed: "Start vertraagd...", launchWaitingConfirmation: "Wachten op bevestiging...", launchWaitingGame: "Wachten op het spel...", launchUpdating: "Spel bijwerken..."
+    },
+    uk: {
+        timeoutEnabled: "Увімкнути тайм-аут", modeAuto: "Автоматично", forceMode: "Примусовий режим", gameTimeout: "Тайм-аут гри", gameTimeoutSeconds: "Тайм-аут гри (секунди)", timeoutHelp: "Автоматично приховує завісу після завершення тайм-ауту.", timeoutDisabledHelp: "Завіса залишається видимою, доки гру не буде виявлено.", exitDelay: "Затримка виходу", exitDelayHelp: "Залишає завісу видимою трохи довше після виявлення гри.",
+        maintenance: "Обслуговування", refreshGameCache: "Оновити кеш ігор", deleteUnusedImages: "Видалити невикористані зображення", downloadPlayStationAssets: "Завантажити ресурси PlayStation", removePlayStationAssets: "Видалити ресурси PlayStation", downloadingPlayStationAssets: "Завантаження ресурсів PlayStation", removingPlayStationAssets: "Видалення ресурсів PlayStation", playStationBulkApplied: "Застосовано", playStationBulkRemoved: "Видалено", playStationBulkSkipped: "Пропущено", playStationBulkFailed: "Помилки", playStationBulkError: "Не вдалося завершити групову операцію PlayStation",
+        tabGame: "Гра", tabAppearance: "Вигляд", tabScrapers: "Джерела", gameBehavior: "Поведінка Launch Curtain", gameBehaviorHelp: "Виберіть поведінку Launch Curtain для цієї гри.", enableForGame: "Увімкнути Launch Curtain для цієї гри", logoHelp: "Керуйте логотипом гри та відкрийте візуальний редактор.", showLogo: "Показувати логотип", openEditor: "Відкрити редактор", logoZoom: "Увімкнути анімацію наближення логотипу", bgZoom: "Увімкнути анімацію віддалення фону",
+        launchImage: "Зображення запуску", noLaunchImage: "Зображення запуску не вибрано", chooseLaunchImage: "Вибрати повноекранне зображення запуску", clearLaunchImage: "Видалити зображення запуску", editorTitle: "Редактор", close: "Закрити", saving: "Збереження...", editorSaveFailed: "Не вдалося зберегти налаштування редактора.", backgroundOpacity: "Непрозорість фону", logoShadowOpacity: "Непрозорість тіні логотипу", logoShadowBlur: "Розмиття тіні логотипу", up: "Вгору", down: "Вниз", left: "Ліворуч", right: "Праворуч", reset: "Скинути", smaller: "Менше", bigger: "Більше", cancel: "Скасувати", save: "Зберегти",
+        downloadBackgrounds: "Завантажити фони", scrapers: "Джерела фонів", scrapersHelp: "Виберіть джерело, знайдіть гру, а потім виберіть фон.", searchQuery: "Пошуковий запит", search: "Пошук", searching: "Пошук...", download: "Завантажити", searchPlayStation: "Пошук у PlayStation Store", searchingPlayStation: "Пошук у PlayStation Store...", choosePlayStationGame: "Виберіть відповідну гру PlayStation.", playStationGame: "Гра PlayStation", viewBackgrounds: "Переглянути фони", loading: "Завантаження...", backToResults: "Назад до результатів", readingBackgrounds: "Читання фонів для", chooseBackground: "Виберіть фон PlayStation.", noBackgrounds: "Відповідних фонів не знайдено.", noPlayStationGames: "Ігор у PlayStation Store не знайдено.",
+        background: "Фон", gameWallpaper: "Шпалери гри", enterSearchQuery: "Введіть пошуковий запит.", searchFailed: "Не вдалося завершити пошук.", gameTitleUnavailable: "Не вдалося прочитати назву гри зі Steam.", imagesFound: "Зображення знайдено.", noImagesFound: "Зображень не знайдено.", imageDownloaded: "Зображення запуску завантажено.", imageDownloadFailed: "Не вдалося завантажити зображення.", chooseFileNotFolder: "Виберіть файл, а не папку.", imagePickerFailed: "Не вдалося вибрати зображення запуску.", noGameSelected: "Гру не вибрано.", launchStarting: "Запуск гри...", launchCheckingLicense: "Перевірка ліцензії...", launchCheckingFiles: "Перевірка файлів гри...", launchInstallingComponents: "Встановлення необхідних компонентів...", launchSyncingCloud: "Синхронізація Steam Cloud...", launchSyncingStats: "Синхронізація статистики...", launchSyncingController: "Завантаження конфігурації контролера...", launchPreparing: "Підготовка запуску...", launchDelayed: "Запуск затримано...", launchWaitingConfirmation: "Очікування підтвердження...", launchWaitingGame: "Очікування гри...", launchUpdating: "Оновлення гри..."
+    },
+    zh: {
+        timeoutEnabled: "启用超时", modeAuto: "自动", forceMode: "强制模式", gameTimeout: "游戏超时", gameTimeoutSeconds: "游戏超时（秒）", timeoutHelp: "超时后自动隐藏启动幕布。", timeoutDisabledHelp: "启动幕布会保持显示，直到检测到游戏。", exitDelay: "退出延迟", exitDelayHelp: "检测到游戏后，让启动幕布继续显示一小段时间。",
+        maintenance: "维护", refreshGameCache: "刷新游戏缓存", deleteUnusedImages: "删除未使用的图片", downloadPlayStationAssets: "下载 PlayStation 素材", removePlayStationAssets: "移除 PlayStation 素材", downloadingPlayStationAssets: "正在下载 PlayStation 素材", removingPlayStationAssets: "正在移除 PlayStation 素材", playStationBulkApplied: "已应用", playStationBulkRemoved: "已移除", playStationBulkSkipped: "已跳过", playStationBulkFailed: "失败", playStationBulkError: "无法完成 PlayStation 批量操作",
+        tabGame: "游戏", tabAppearance: "外观", tabScrapers: "来源", gameBehavior: "Launch Curtain 行为", gameBehaviorHelp: "选择 Launch Curtain 对此游戏的行为。", enableForGame: "为此游戏启用 Launch Curtain", logoHelp: "管理游戏标志并打开可视化编辑器。", showLogo: "显示标志", openEditor: "打开编辑器", logoZoom: "启用标志放大动画", bgZoom: "启用背景缩小动画",
+        launchImage: "启动图片", noLaunchImage: "未选择启动图片", chooseLaunchImage: "选择全屏启动图片", clearLaunchImage: "清除启动图片", editorTitle: "编辑器", close: "关闭", saving: "正在保存...", editorSaveFailed: "无法保存编辑器设置。", backgroundOpacity: "背景不透明度", logoShadowOpacity: "标志阴影不透明度", logoShadowBlur: "标志阴影模糊", up: "上", down: "下", left: "左", right: "右", reset: "重置", smaller: "缩小", bigger: "放大", cancel: "取消", save: "保存",
+        downloadBackgrounds: "下载背景", scrapers: "背景来源", scrapersHelp: "选择一个来源，搜索游戏，然后选择背景。", searchQuery: "搜索内容", search: "搜索", searching: "正在搜索...", download: "下载", searchPlayStation: "搜索 PlayStation Store", searchingPlayStation: "正在搜索 PlayStation Store...", choosePlayStationGame: "选择匹配的 PlayStation 游戏。", playStationGame: "PlayStation 游戏", viewBackgrounds: "查看背景", loading: "正在加载...", backToResults: "返回结果", readingBackgrounds: "正在读取背景：", chooseBackground: "选择 PlayStation 背景。", noBackgrounds: "未找到合适的背景。", noPlayStationGames: "未在 PlayStation Store 中找到游戏。",
+        background: "背景", gameWallpaper: "游戏壁纸", enterSearchQuery: "请输入搜索内容。", searchFailed: "无法完成搜索。", gameTitleUnavailable: "无法从 Steam 读取游戏标题。", imagesFound: "已找到图片。", noImagesFound: "未找到图片。", imageDownloaded: "启动图片已下载。", imageDownloadFailed: "无法下载图片。", chooseFileNotFolder: "请选择文件，而不是文件夹。", imagePickerFailed: "无法选择启动图片。", noGameSelected: "未选择游戏。", launchStarting: "正在启动游戏...", launchCheckingLicense: "正在检查许可证...", launchCheckingFiles: "正在检查游戏文件...", launchInstallingComponents: "正在安装所需组件...", launchSyncingCloud: "正在同步 Steam Cloud...", launchSyncingStats: "正在同步统计数据...", launchSyncingController: "正在加载控制器配置...", launchPreparing: "正在准备启动...", launchDelayed: "启动已延迟...", launchWaitingConfirmation: "正在等待确认...", launchWaitingGame: "正在等待游戏...", launchUpdating: "正在更新游戏..."
+    },
+    ja: {
+        timeoutEnabled: "タイムアウトを有効化", modeAuto: "自動", forceMode: "モードを強制", gameTimeout: "ゲームのタイムアウト", gameTimeoutSeconds: "ゲームのタイムアウト（秒）", timeoutHelp: "タイムアウトするとカーテンを自動的に非表示にします。", timeoutDisabledHelp: "ゲームが検出されるまでカーテンを表示し続けます。", exitDelay: "終了遅延", exitDelayHelp: "ゲーム検出後もカーテンを少し長く表示します。",
+        maintenance: "メンテナンス", refreshGameCache: "ゲームキャッシュを更新", deleteUnusedImages: "未使用の画像を削除", downloadPlayStationAssets: "PlayStation アセットをダウンロード", removePlayStationAssets: "PlayStation アセットを削除", downloadingPlayStationAssets: "PlayStation アセットをダウンロード中", removingPlayStationAssets: "PlayStation アセットを削除中", playStationBulkApplied: "適用済み", playStationBulkRemoved: "削除済み", playStationBulkSkipped: "スキップ", playStationBulkFailed: "失敗", playStationBulkError: "PlayStation の一括処理を完了できませんでした",
+        tabGame: "ゲーム", tabAppearance: "外観", tabScrapers: "ソース", gameBehavior: "Launch Curtain の動作", gameBehaviorHelp: "このゲームでの Launch Curtain の動作を選択します。", enableForGame: "このゲームで Launch Curtain を有効化", logoHelp: "ゲームロゴを管理し、ビジュアルエディターを開きます。", showLogo: "ロゴを表示", openEditor: "エディターを開く", logoZoom: "ロゴのズームインアニメーションを有効化", bgZoom: "背景のズームアウトアニメーションを有効化",
+        launchImage: "起動画像", noLaunchImage: "起動画像が選択されていません", chooseLaunchImage: "全画面の起動画像を選択", clearLaunchImage: "起動画像を削除", editorTitle: "エディター", close: "閉じる", saving: "保存中...", editorSaveFailed: "エディター設定を保存できませんでした。", backgroundOpacity: "背景の不透明度", logoShadowOpacity: "ロゴ影の不透明度", logoShadowBlur: "ロゴ影のぼかし", up: "上", down: "下", left: "左", right: "右", reset: "リセット", smaller: "小さく", bigger: "大きく", cancel: "キャンセル", save: "保存",
+        downloadBackgrounds: "背景をダウンロード", scrapers: "背景ソース", scrapersHelp: "ソースを選び、ゲームを検索してから背景を選択します。", searchQuery: "検索語", search: "検索", searching: "検索中...", download: "ダウンロード", searchPlayStation: "PlayStation Store を検索", searchingPlayStation: "PlayStation Store を検索中...", choosePlayStationGame: "一致する PlayStation ゲームを選択してください。", playStationGame: "PlayStation ゲーム", viewBackgrounds: "背景を表示", loading: "読み込み中...", backToResults: "結果に戻る", readingBackgrounds: "背景を読み込み中：", chooseBackground: "PlayStation の背景を選択してください。", noBackgrounds: "適切な背景が見つかりませんでした。", noPlayStationGames: "PlayStation Store にゲームが見つかりませんでした。",
+        background: "背景", gameWallpaper: "ゲームの壁紙", enterSearchQuery: "検索語を入力してください。", searchFailed: "検索を完了できませんでした。", gameTitleUnavailable: "Steam からゲームタイトルを読み取れませんでした。", imagesFound: "画像が見つかりました。", noImagesFound: "画像が見つかりませんでした。", imageDownloaded: "起動画像をダウンロードしました。", imageDownloadFailed: "画像をダウンロードできませんでした。", chooseFileNotFolder: "フォルダーではなくファイルを選択してください。", imagePickerFailed: "起動画像を選択できませんでした。", noGameSelected: "ゲームが選択されていません。", launchStarting: "ゲームを起動中...", launchCheckingLicense: "ライセンスを確認中...", launchCheckingFiles: "ゲームファイルを確認中...", launchInstallingComponents: "必要なコンポーネントをインストール中...", launchSyncingCloud: "Steam Cloud を同期中...", launchSyncingStats: "統計を同期中...", launchSyncingController: "コントローラー設定を読み込み中...", launchPreparing: "起動を準備中...", launchDelayed: "起動が遅れています...", launchWaitingConfirmation: "確認を待っています...", launchWaitingGame: "ゲームを待っています...", launchUpdating: "ゲームを更新中..."
+    }
+};
+
 function getLocaleKey() {
     const rawLanguage = navigator.language.toLowerCase();
     if (rawLanguage.startsWith("pt-br"))
@@ -486,7 +595,7 @@ function getLocaleKey() {
 }
 function getStrings() {
     const locale = getLocaleKey();
-    return { ...I18N.en, ...EXTRA_STRINGS.en, ...(I18N[locale] ?? {}), ...(EXTRA_STRINGS[locale] ?? {}) };
+    return { ...I18N.en, ...EXTRA_STRINGS.en, ...(I18N[locale] ?? {}), ...(EXTRA_STRINGS[locale] ?? {}), ...(EXTRA_TRANSLATIONS[locale] ?? {}) };
 }
 
 
@@ -557,6 +666,8 @@ class PlayButtonLaunchHook {
         this.currentBackdropSource = "";
         this.currentBackdropResolvedUrl = "";
         this.currentBackdropOpacity = 0;
+        this.instantAnimationEpoch = 0;
+        this.instantAnimationStartedAt = 0;
         this.gameRunning = false;
         this.uiMode = undefined;
         this.handlePointerDown = (event) => {
@@ -673,8 +784,13 @@ class PlayButtonLaunchHook {
     setSettingsCache(settings) {
         this.settingsCache = settings || {};
         if (this.currentBackdropAppId) {
+            const gameSettings = this.gameSettingsForApp(this.currentBackdropAppId);
             this.applyInstantBackdrop(this.currentBackdropAppId);
             this.applyInstantLogoShadow(this.currentBackdropAppId);
+            if (gameSettings.show_logo === false) {
+                this.logoPreviewToken += 1;
+                this.setInstantCurtainLogo("", false);
+            }
         }
     }
     gameSettingsForApp(appId) {
@@ -709,6 +825,11 @@ class PlayButtonLaunchHook {
         const immediateAppId = this.findAppIdForEvent(target, path);
         if (immediateAppId && !this.isGameEnabled(immediateAppId)) {
             return;
+        }
+        const immediateSettings = this.gameSettingsForApp(immediateAppId);
+        if (immediateAppId && immediateSettings.show_logo === false) {
+            this.logoPreviewToken += 1;
+            this.setInstantCurtainLogo("", false);
         }
         this.showNativeBlackCover(reason, LAUNCH_BRIDGE_COVER_MS);
         this.revealInstantCurtain(PROBATION_COVER_MS);
@@ -1296,6 +1417,7 @@ class PlayButtonLaunchHook {
     scheduleBackendLaunch(reason, appId, logoSource, delayMs = 0, isShortcut = false, confirmedLaunch = false) {
         this.clearPendingBackendLaunch();
         const token = ++this.backendLaunchToken;
+        const showLogo = this.gameSettingsForApp(appId).show_logo !== false;
         const run = (resolvedLogoSource) => {
             if (token !== this.backendLaunchToken) {
                 return;
@@ -1319,12 +1441,15 @@ class PlayButtonLaunchHook {
             });
         };
         if (appId) {
-            const initialLogoSource = logoSource || undefined;
+            const initialLogoSource = showLogo ? (logoSource || undefined) : undefined;
             if (delayMs <= 0) {
                 run(initialLogoSource);
             }
             else {
                 this.backendLaunchTimer = window.setTimeout(() => run(initialLogoSource), delayMs);
+            }
+            if (!showLogo) {
+                return;
             }
             void this.resolveGameLogoSource(appId, logoSource, isShortcut).then((resolvedLogoSource) => {
                 if (token !== this.backendLaunchToken) {
@@ -1558,7 +1683,7 @@ class PlayButtonLaunchHook {
         .launch-curtain-instant--art-visible .launch-curtain-instant__backdrop {
           opacity: var(--lc-backdrop-opacity, 1);
         }
-        @keyframes launch-curtain-bg-zoom { from { transform: scale(1.05); } to { transform: scale(1); } }
+        @keyframes launch-curtain-bg-zoom { from { transform: scale(1.06); } to { transform: scale(1); } }
         .launch-curtain-instant__backdrop--zoom {
           animation: launch-curtain-bg-zoom 12s ease-out forwards;
           transform-origin: center center;
@@ -1715,7 +1840,20 @@ class PlayButtonLaunchHook {
             stack.style.top = `${y}%`;
             stack.style.transform = `translate(-50%, -50%) scale(${scale})`;
             stack.querySelectorAll(".launch-curtain-instant__logo-image, .launch-curtain-instant__logo").forEach((logo) => {
-                logo.style.animation = zoomEnabled ? "launch-curtain-logo-zoom 18s ease-out forwards" : "none";
+                if (!zoomEnabled) {
+                    logo.style.animation = "none";
+                    logo.style.animationDelay = "";
+                    delete logo.dataset.lcAnimationEpoch;
+                    return;
+                }
+                const epoch = String(this.instantAnimationEpoch);
+                if (logo.dataset.lcAnimationEpoch === epoch) {
+                    return;
+                }
+                const elapsed = Math.max(0, Date.now() - this.instantAnimationStartedAt);
+                logo.style.animation = "launch-curtain-logo-zoom 18s ease-out forwards";
+                logo.style.animationDelay = `${-Math.min(elapsed, 18000)}ms`;
+                logo.dataset.lcAnimationEpoch = epoch;
             });
         }
     }
@@ -1778,7 +1916,7 @@ class PlayButtonLaunchHook {
                 if (img.getAttribute("src") !== resolvedUrl) {
                     img.addEventListener("load", () => {
                         if (this.instantCurtainVisible) {
-                            this.applyInstantBgZoom(this.currentBackdropAppId, true);
+                            this.applyInstantBgZoom(this.currentBackdropAppId);
                         }
                     }, { once: true });
                     img.setAttribute("src", resolvedUrl);
@@ -1867,13 +2005,22 @@ class PlayButtonLaunchHook {
             if (!img) continue;
             if (!on) {
                 img.classList.remove("launch-curtain-instant__backdrop--zoom");
+                img.style.animationDelay = "";
+                delete img.dataset.lcAnimationEpoch;
                 continue;
             }
-            if (restart) {
+            const epoch = String(this.instantAnimationEpoch);
+            if (!restart && img.dataset.lcAnimationEpoch === epoch) {
+                continue;
+            }
+            if (restart && img.dataset.lcAnimationEpoch !== epoch) {
                 img.classList.remove("launch-curtain-instant__backdrop--zoom");
                 img.getBoundingClientRect();
             }
+            const elapsed = Math.max(0, Date.now() - this.instantAnimationStartedAt);
+            img.style.animationDelay = `${-Math.min(elapsed, 12000)}ms`;
             img.classList.add("launch-curtain-instant__backdrop--zoom");
+            img.dataset.lcAnimationEpoch = epoch;
         }
     }
     syncModernCurtainSurfaces() {
@@ -1931,7 +2078,12 @@ class PlayButtonLaunchHook {
             window.cancelAnimationFrame(this.instantCurtainTransitionFrame);
             this.instantCurtainTransitionFrame = undefined;
         }
+        const wasVisible = this.instantCurtainVisible;
         this.instantCurtainVisible = true;
+        if (!wasVisible) {
+            this.instantAnimationEpoch += 1;
+            this.instantAnimationStartedAt = Date.now();
+        }
         const curtains = this.instantCurtains();
         this.dbg("modern surfaces=" + curtains.length);
         for (const curtain of curtains) {
@@ -2085,14 +2237,25 @@ class PlayButtonLaunchHook {
     setInstantCurtainLogo(logoUrl, showLogo = true) {
         this.currentInstantLogoUrl = logoUrl || "";
         this.currentInstantShowLogo = showLogo !== false;
+        const desiredUrl = this.currentInstantLogoUrl;
+        const desiredVisible = this.currentInstantShowLogo;
         for (const curtain of this.instantCurtains()) {
             const slot = curtain.querySelector(".launch-curtain-instant__logo-slot");
             if (!slot) continue;
-            slot.innerHTML = showLogo ? this.logoMarkup(logoUrl) : "";
+            if (
+                slot.dataset.lcLogoUrl === desiredUrl
+                && slot.dataset.lcLogoVisible === String(desiredVisible)
+            ) {
+                continue;
+            }
+            slot.innerHTML = desiredVisible ? this.logoMarkup(desiredUrl) : "";
+            slot.dataset.lcLogoUrl = desiredUrl;
+            slot.dataset.lcLogoVisible = String(desiredVisible);
             this.wireInstantLogoFallback(curtain);
         }
+        this.applyInstantLogoPlacement(this.gameSettingsForApp(this.currentBackdropAppId));
         this.applyInstantLogoShadow(this.currentBackdropAppId);
-        this.preloadLogo(logoUrl);
+        this.preloadLogo(desiredUrl);
     }
     refreshPreparedFallback() {
         if (this.instantCurtainVisible || this.prearmedInstantAppId) {
@@ -2198,14 +2361,14 @@ class PlayButtonLaunchHook {
                 }
             }
             this.gamepadLaunchPressed = confirmPressed;
-            this.gamepadLaunchFrame = window.requestAnimationFrame(poll);
+            this.gamepadLaunchTimer = window.setTimeout(poll, 50);
         };
-        this.gamepadLaunchFrame = window.requestAnimationFrame(poll);
+        this.gamepadLaunchTimer = window.setTimeout(poll, 50);
     }
     stopGamepadLaunchPolling() {
-        if (this.gamepadLaunchFrame !== undefined) {
-            window.cancelAnimationFrame(this.gamepadLaunchFrame);
-            this.gamepadLaunchFrame = undefined;
+        if (this.gamepadLaunchTimer !== undefined) {
+            window.clearTimeout(this.gamepadLaunchTimer);
+            this.gamepadLaunchTimer = undefined;
         }
         this.gamepadLaunchPressed = false;
     }
@@ -2347,7 +2510,7 @@ function LaunchCurtainPageStyles() {
     ` });
 }
 function SettingsCard({ title, description, children, trailing, className = "" }) {
-    return SP_JSX.jsxs(DFL.Focusable, { "flow-children": "vertical", className: `lc-card${className ? ` ${className}` : ""}`, children: [
+    return SP_JSX.jsxs(DFL.Focusable, { "flow-children": "column", className: `lc-card${className ? ` ${className}` : ""}`, children: [
         title || description || trailing ? SP_JSX.jsxs("div", { className: "lc-card__header", children: [
                 SP_JSX.jsxs("div", { className: "lc-card__heading", children: [
                         title ? SP_JSX.jsx("div", { className: "lc-card__title", children: title }) : null,
@@ -2357,6 +2520,12 @@ function SettingsCard({ title, description, children, trailing, className = "" }
             ] }) : null,
         SP_JSX.jsx("div", { className: "lc-card__body", children: children })
     ] });
+}
+function QamSectionHeading({ icon, children }) {
+    return SP_JSX.jsxs("div", { className: "lcQamSectionLabel", children: [icon, SP_JSX.jsx("span", { children })] });
+}
+function QamButton({ icon, children, ...props }) {
+    return SP_JSX.jsx(DFL.DialogButton, { ...props, className: `lcQamButton${props.className ? ` ${props.className}` : ""}`, children: SP_JSX.jsxs("span", { className: "lcQamButtonInner", children: [icon, SP_JSX.jsx("span", { children })] }) });
 }
 function notify(result, strings) {
     toaster.toast({
@@ -2641,40 +2810,62 @@ function Content() {
         { data: "off", label: strings.modeOff ?? I18N.en.modeOff ?? "Off" }
     ];
     const selectedCurtainMode = settings?.curtain_mode ?? "modern";
-    return SP_JSX.jsxs(SP_JSX.Fragment, { children: [
-        SP_JSX.jsxs(DFL.PanelSection, { "flow-children": "column", title: strings.automation, children: [
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.DropdownItem, { label: strings.launchMode ?? I18N.en.launchMode ?? "Launch mode", rgOptions: curtainModeOptions, selectedOption: selectedCurtainMode, disabled: busy || !settings, onChange: (option) => {
-                    if (typeof option.data === "string") void setCurtainMode(option.data);
-                } }) }),
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.ToggleField, { label: strings.launchInfo ?? I18N.en.launchInfo ?? "Launch info", checked: Boolean(settings?.show_launch_info), disabled: busy || !settings, onChange: (checked) => { void setShowLaunchInfo(checked); } }) }),
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.ToggleField, { label: strings.timeoutEnabled ?? I18N.en.timeoutEnabled ?? "Enable timeout", checked: settings?.timeout_enabled ?? false, disabled: busy || !settings, onChange: (checked) => { void setTimeoutEnabled(checked); } }) }),
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx("div", { style: { ...rowTextStyle, whiteSpace: "normal" }, children: (settings?.timeout_enabled ?? false)
-                    ? (strings.timeoutHelp ?? I18N.en.timeoutHelp ?? "How long the launch screen can stay visible while waiting for the game to become fullscreen.")
-                    : (strings.timeoutDisabledHelp ?? I18N.en.timeoutDisabledHelp ?? "When disabled, the launch screen hides only after fullscreen detection or manual close.") }) }),
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.DropdownItem, { label: strings.timeout, rgOptions: timeoutOptions, selectedOption: selectedTimeout, disabled: busy || !settings || !(settings.timeout_enabled ?? false), onChange: (option) => {
-                    if (typeof option.data === "number") void setTimeoutValue(option.data);
-                } }) }),
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx("div", { style: { ...rowTextStyle, whiteSpace: "normal" }, children: strings.exitDelayHelp ?? I18N.en.exitDelayHelp ?? "How long Launch Curtain stays visible after detecting that the game is ready." }) }),
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.DropdownItem, { label: strings.exitDelay ?? I18N.en.exitDelay ?? "Exit delay", rgOptions: exitDelayOptions, selectedOption: selectedExitDelay, disabled: busy || !settings, onChange: (option) => {
-                    if (typeof option.data === "number") void setExitDelayValue(option.data);
-                } }) }),
-            playStationBulkStatus ? SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsxs("div", { style: { ...rowTextStyle, whiteSpace: "normal", fontWeight: 650 }, children: [
-                    `${playStationBulkStatus.remove ? strings.removingPlayStationAssets : strings.downloadingPlayStationAssets} (${playStationBulkStatus.current}/${playStationBulkStatus.total})`,
-                    SP_JSX.jsx("div", { style: { color: "white", marginTop: 4 }, children: playStationBulkStatus.title })
-                ] }) }) : null,
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", disabled: busy || !settings, onClick: () => { void runPlayStationBulk(false); }, children: strings.downloadPlayStationAssets }) }),
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", disabled: busy || !settings, onClick: () => { void runPlayStationBulk(true); }, children: strings.removePlayStationAssets }) })
+    return SP_JSX.jsx(DFL.ScrollPanel, { children: SP_JSX.jsxs(DFL.Focusable, { "flow-children": "column", className: "lcQamRedesign", children: [
+        SP_JSX.jsx("style", { children: `
+          .lcQamRedesign,.lcQamRedesign *{box-sizing:border-box;min-width:0;letter-spacing:0}
+          .lcQamRedesign{width:100%;padding:2px 12px 26px 4px;overflow-x:hidden;color:#fff}
+          .lcQamSectionLabel{display:flex;align-items:center;gap:8px;margin:14px 4px 7px;font-size:12px;font-weight:800;text-transform:uppercase;opacity:.56}
+          .lcQamSectionLabel svg{width:13px;height:13px;flex:none}
+          .lcQamCard{width:100%;margin:0 0 9px;padding:12px;border:1px solid rgba(255,255,255,.085);border-radius:6px;background:rgba(255,255,255,.035);overflow:hidden}
+          .lcQamCard [class*="PanelSectionRow"]{width:100%!important;max-width:100%!important;padding-left:0!important;padding-right:0!important}
+          .lcQamCard [class*="Dropdown"]{max-width:100%!important}
+          .lcQamDropdownBlock{display:flex;flex-direction:column;gap:7px;width:100%;padding:8px 0 10px}
+          .lcQamDropdownLabel{font-size:14px;line-height:18px;color:#fff}
+          .lcQamDropdownControl,.lcQamDropdownControl>div,.lcQamDropdownControl [role="combobox"]{width:100%!important;max-width:100%!important}
+          .lcQamHelp{margin:3px 2px 8px;font-size:12px;line-height:1.35;opacity:.57;overflow-wrap:anywhere}
+          .lcQamMeta{margin:0 2px 10px;font-size:12px;line-height:1.35;opacity:.58;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+          .lcQamDivider{height:1px;margin:10px 0;background:rgba(255,255,255,.07)}
+          .lcQamButton{width:100%!important;min-height:38px!important;padding:0 10px!important;border-radius:5px!important;color:#fff!important;font-size:14px!important}
+          .lcQamButtonInner{display:grid;grid-template-columns:18px minmax(0,1fr);align-items:center;gap:9px;width:100%;text-align:left}
+          .lcQamButtonInner svg{width:15px;height:15px;justify-self:center}
+          .lcQamButton:hover,.lcQamButton:focus,.lcQamButton.gpfocus{background:rgba(240,180,41,.16)!important;color:#fff!important;border-color:rgba(240,180,41,.92)!important;box-shadow:0 0 0 2px rgba(240,180,41,.22)!important}
+          .lcQamButton:hover *,.lcQamButton:focus *,.lcQamButton.gpfocus *{color:inherit!important}
+          .lcQamButton:disabled{opacity:.35!important}
+          .lcQamButtonStack{display:grid;gap:7px}
+          .lcQamStatus{padding:9px 10px;margin-bottom:8px;border-radius:5px;background:rgba(240,180,41,.09);font-size:12px;line-height:1.35}
+        ` }),
+        SP_JSX.jsx(QamSectionHeading, { icon: SP_JSX.jsx(FaRocket, {}), children: strings.automation }),
+        SP_JSX.jsxs("section", { className: "lcQamCard", children: [
+            SP_JSX.jsxs(DFL.Focusable, { "flow-children": "column", className: "lcQamDropdownBlock", children: [
+                SP_JSX.jsx("div", { className: "lcQamDropdownLabel", children: strings.launchMode ?? I18N.en.launchMode ?? "Launch mode" }),
+                SP_JSX.jsx("div", { className: "lcQamDropdownControl", children: SP_JSX.jsx(DFL.Dropdown, { menuLabel: strings.launchMode ?? I18N.en.launchMode ?? "Launch mode", rgOptions: curtainModeOptions, selectedOption: selectedCurtainMode, disabled: busy || !settings, onChange: (option) => { if (typeof option.data === "string") void setCurtainMode(option.data); } }) })
+            ] }),
+            SP_JSX.jsx(DFL.ToggleField, { label: strings.launchInfo ?? I18N.en.launchInfo ?? "Launch info", checked: Boolean(settings?.show_launch_info), disabled: busy || !settings, onChange: (checked) => { void setShowLaunchInfo(checked); } }),
+            SP_JSX.jsx(DFL.ToggleField, { label: strings.timeoutEnabled ?? I18N.en.timeoutEnabled ?? "Enable timeout", checked: settings?.timeout_enabled ?? false, disabled: busy || !settings, onChange: (checked) => { void setTimeoutEnabled(checked); } }),
+            SP_JSX.jsx("div", { className: "lcQamHelp", children: (settings?.timeout_enabled ?? false) ? (strings.timeoutHelp ?? I18N.en.timeoutHelp ?? "How long the launch screen can stay visible while waiting for the game to become fullscreen.") : (strings.timeoutDisabledHelp ?? I18N.en.timeoutDisabledHelp ?? "When disabled, the launch screen hides only after fullscreen detection or manual close.") }),
+            SP_JSX.jsx(DFL.DropdownItem, { label: strings.timeout, rgOptions: timeoutOptions, selectedOption: selectedTimeout, disabled: busy || !settings || !(settings.timeout_enabled ?? false), onChange: (option) => { if (typeof option.data === "number") void setTimeoutValue(option.data); } }),
+            SP_JSX.jsx("div", { className: "lcQamHelp", children: strings.exitDelayHelp ?? I18N.en.exitDelayHelp ?? "How long Launch Curtain stays visible after detecting that the game is ready." }),
+            SP_JSX.jsx(DFL.DropdownItem, { label: strings.exitDelay ?? I18N.en.exitDelay ?? "Exit delay", rgOptions: exitDelayOptions, selectedOption: selectedExitDelay, disabled: busy || !settings, onChange: (option) => { if (typeof option.data === "number") void setExitDelayValue(option.data); } }),
+            playStationBulkStatus ? SP_JSX.jsxs("div", { className: "lcQamStatus", children: [`${playStationBulkStatus.remove ? strings.removingPlayStationAssets : strings.downloadingPlayStationAssets} (${playStationBulkStatus.current}/${playStationBulkStatus.total})`, SP_JSX.jsx("div", { style: { marginTop: 3, fontWeight: 700 }, children: playStationBulkStatus.title })] }) : null,
+            SP_JSX.jsxs(DFL.Focusable, { "flow-children": "column", className: "lcQamButtonStack", children: [
+                SP_JSX.jsx(QamButton, { icon: SP_JSX.jsx(FaDownload, {}), disabled: busy || !settings, onClick: () => { void runPlayStationBulk(false); }, children: strings.downloadPlayStationAssets }),
+                SP_JSX.jsx(QamButton, { icon: SP_JSX.jsx(FaTrashAlt, {}), disabled: busy || !settings, onClick: () => { void runPlayStationBulk(true); }, children: strings.removePlayStationAssets })
+            ] })
         ] }),
-        SP_JSX.jsxs(DFL.PanelSection, { "flow-children": "column", title: strings.logo, children: [
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx("div", { style: rowTextStyle, children: settings?.custom_logo_path ? `${strings.customLogo}: ${settings.custom_logo_path}` : strings.defaultLogo }) }),
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", disabled: busy || !settings, onClick: () => { void chooseLogo(); }, children: strings.chooseLogo }) }),
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", disabled: busy || !settings || !settings.custom_logo_path, onClick: () => { void useDefaultLogo(); }, children: strings.useDefaultLogo }) })
+        SP_JSX.jsx(QamSectionHeading, { icon: SP_JSX.jsx(FaImage, {}), children: strings.logo }),
+        SP_JSX.jsxs("section", { className: "lcQamCard", children: [
+            SP_JSX.jsx("div", { className: "lcQamMeta", title: settings?.custom_logo_path || "", children: settings?.custom_logo_path ? `${strings.customLogo}: ${settings.custom_logo_path}` : strings.defaultLogo }),
+            SP_JSX.jsxs(DFL.Focusable, { "flow-children": "column", className: "lcQamButtonStack", children: [
+                SP_JSX.jsx(QamButton, { icon: SP_JSX.jsx(FaFolderOpen, {}), disabled: busy || !settings, onClick: () => { void chooseLogo(); }, children: strings.chooseLogo }),
+                SP_JSX.jsx(QamButton, { icon: SP_JSX.jsx(FaUndo, {}), disabled: busy || !settings || !settings.custom_logo_path, onClick: () => { void useDefaultLogo(); }, children: strings.useDefaultLogo })
+            ] })
         ] }),
-        SP_JSX.jsxs(DFL.PanelSection, { "flow-children": "column", title: strings.maintenance, children: [
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", disabled: busy || !settings, onClick: () => { void createGameCache(); }, children: strings.refreshGameCache }) }),
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", disabled: busy || !settings, onClick: () => { void cleanupLaunchImages(); }, children: strings.deleteUnusedImages }) })
-        ] })
-    ] });
+        SP_JSX.jsx(QamSectionHeading, { icon: SP_JSX.jsx(FaTools, {}), children: strings.maintenance }),
+        SP_JSX.jsx("section", { className: "lcQamCard", children: SP_JSX.jsxs(DFL.Focusable, { "flow-children": "column", className: "lcQamButtonStack", children: [
+            SP_JSX.jsx(QamButton, { icon: SP_JSX.jsx(FaTools, {}), disabled: busy || !settings, onClick: () => { void createGameCache(); }, children: strings.refreshGameCache }),
+            SP_JSX.jsx(QamButton, { icon: SP_JSX.jsx(FaTrashAlt, {}), disabled: busy || !settings, onClick: () => { void cleanupLaunchImages(); }, children: strings.deleteUnusedImages })
+        ] }) })
+    ] }) });
 }
 
 const getAppOverviewSafe = (appId) => {
@@ -2965,7 +3156,7 @@ function LogoEditorSurface({ backdropPath, logoSource, fallbackLogoPath, initial
         SP_JSX.jsx(LaunchCurtainPageStyles, {}),
         SP_JSX.jsx(DFL.ScrollPanel, { children: SP_JSX.jsxs(DFL.Focusable, { "flow-children": "vertical", noFocusRing: true, style: editorPageStyle, children: [
             SP_JSX.jsx(SettingsCard, { title: strings.editorTitle, children: SP_JSX.jsxs("div", { className: "lc-editor-layout", children: [
-                SP_JSX.jsx(DFL.Focusable, { focusable: true, noFocusRing: false, onKeyDown: handlePreviewKeyDown, className: "lc-editor-preview", children: [
+                SP_JSX.jsx("div", { className: "lc-editor-preview", "aria-hidden": true, style: { pointerEvents: "none" }, children: [
                     backdropUrl ? SP_JSX.jsx("img", { src: backdropUrl, className: "lc-editor-preview__backdrop", style: { opacity: draft.background_opacity / 100 } }) : null,
                     logoUrl ? SP_JSX.jsx("img", { src: logoUrl, className: "lc-editor-preview__logo", style: {
                         left: `${draft.logo_position_x}%`,
@@ -3744,9 +3935,9 @@ function initLaunchInfo() {
     try { scaLog("LAUNCHINFO GameAction keys=" + Object.keys(A.Apps).filter(function (k) { return /GameAction/i.test(k); }).join(",")); } catch (e) {}
     let logged = 0;
     const dbg = function (t) { try { if (logged < 40) { logged++; scaLog(t); } } catch (e) {} };
-    const send = function (t) {
+    const send = function (t, phase) {
       const text = String(t == null ? "" : t);
-      try { setLaunchStatus(text); } catch (e) {}
+      try { setLaunchStatus(phase ? { text, phase } : text); } catch (e) {}
       try { playButtonHook.setInstantStatus(text); } catch (e) {}
     };
     const humanize = function (s) {
@@ -3796,13 +3987,14 @@ function initLaunchInfo() {
         if (Object.prototype.hasOwnProperty.call(TASKMAP, value)) mapped = TASKMAP[value];
         if (/[A-Za-z]/.test(value)) textish = value;
       }
-      if (mapped !== null) send(mapped);
+      const completed = args.some(function (value) { return value === "Completed" || value === "Done"; });
+      if (mapped !== null) send(mapped, completed ? "complete" : undefined);
       else if (textish) send(humanize(textish));
     };
     if (typeof A.Apps.RegisterForGameActionStart === "function") {
       A.Apps.RegisterForGameActionStart(function () {
         dbg("GA_START " + JSON.stringify(Array.prototype.slice.call(arguments)));
-        send(strings.launchStarting);
+        send(strings.launchStarting, "start");
       });
     }
     if (typeof A.Apps.RegisterForGameActionTaskChange === "function") {
@@ -3811,7 +4003,7 @@ function initLaunchInfo() {
     if (typeof A.Apps.RegisterForGameActionEnd === "function") {
       A.Apps.RegisterForGameActionEnd(function () {
         dbg("GA_END " + JSON.stringify(Array.prototype.slice.call(arguments)));
-        send(strings.launchWaitingGame);
+        send(strings.launchWaitingGame, "complete");
       });
     }
     if (typeof A.Apps.RegisterForGameActionShowError === "function") {
@@ -3847,7 +4039,7 @@ var index = definePlugin(() => {
     });
     return {
         name: "Launch Curtain",
-        titleView: SP_JSX.jsx("div", { className: DFL.staticClasses.Title, children: "Launch Curtain" }),
+        titleView: SP_JSX.jsxs("div", { className: DFL.staticClasses.Title, style: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "0.45rem", width: "100%", marginLeft: "auto", paddingRight: 8 }, children: [SP_JSX.jsx(FaTheaterMasks, { size: 19 }), SP_JSX.jsx("span", { children: "Launch Curtain" })] }),
         content: SP_JSX.jsx(Content, {}),
         icon: SP_JSX.jsx(FaTheaterMasks, {}),
         alwaysRender: true,

@@ -29,7 +29,7 @@ var index = definePlugin(() => {
     });
     return {
         name: "Launch Curtain",
-        titleView: SP_JSX.jsx("div", { className: DFL.staticClasses.Title, children: "Launch Curtain" }),
+        titleView: SP_JSX.jsxs("div", { className: DFL.staticClasses.Title, style: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "0.45rem", width: "100%", marginLeft: "auto", paddingRight: 8 }, children: [SP_JSX.jsx(FaTheaterMasks, { size: 19 }), SP_JSX.jsx("span", { children: "Launch Curtain" })] }),
         content: SP_JSX.jsx(Content, {}),
         icon: SP_JSX.jsx(FaTheaterMasks, {}),
         alwaysRender: true,

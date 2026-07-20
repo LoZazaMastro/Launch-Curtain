@@ -185,6 +185,61 @@ IGNORED_LAUNCH_CHILDREN = {
     "searchapp.exe"
 }
 
+# These processes may be part of a valid Steam launch chain, but their windows are
+# setup, launcher, or anti-cheat surfaces rather than the game render surface. Keep
+# following their children without ever selecting the helper itself for hand-off.
+TRANSIENT_LAUNCH_PROCESS_EXACT = {
+    "easyanticheat.exe",
+    "easyanticheat_eos.exe",
+    "easyanticheat_eos_setup.exe",
+    "epiconlineserviceshost.exe",
+    "epiconlineservicesinstallhelper.exe",
+    "epiconlineservicesinstaller.exe",
+    "epiconlineservicesuserhelper.exe",
+    "start_protected_game.exe",
+    "x64launcher.exe",
+}
+
+TRANSIENT_LAUNCH_PROCESS_HINTS = (
+    "anticheat",
+    "anti-cheat",
+    "crashreport",
+    "installhelper",
+    "installer",
+    "prereq",
+    "redistributable",
+    "setup.exe",
+)
+
+# A few games create a genuine fullscreen window for their startup splash and then
+# reuse the same process/HWND for the renderer. Geometry cannot distinguish those
+# phases, so wait for a longer stable surface before handing focus to these games.
+LONG_FULLSCREEN_SPLASH_PROCESSES = {
+    "forzahorizon6.exe": 10.0,
+}
+
+# These games reuse the startup splash window for the final renderer. Steam's
+# GameAction completion is the only reliable phase boundary available to us.
+POST_GAME_ACTION_SETTLE_PROCESSES = {
+    "forzahorizon6.exe": 8.0,
+}
+POST_GAME_ACTION_FALLBACK_PROCESSES = {
+    "forzahorizon6.exe": 30.0,
+}
+
+
+def _is_transient_launch_process(process_name: str) -> bool:
+    name = str(process_name or "").strip().lower()
+    return bool(name) and (
+        name in TRANSIENT_LAUNCH_PROCESS_EXACT
+        or any(hint in name for hint in TRANSIENT_LAUNCH_PROCESS_HINTS)
+    )
+
+
+def _modern_handoff_settle_seconds(process_name: str, configured_seconds: float) -> float:
+    name = str(process_name or "").strip().lower()
+    return max(float(configured_seconds), LONG_FULLSCREEN_SPLASH_PROCESSES.get(name, 0.0))
+
 
 class PROCESSENTRY32W(ctypes.Structure):
     _fields_ = [
@@ -441,7 +496,7 @@ def _clean_store_image_url(raw_url: str, resolution: str) -> str:
     return _store_image_url_with_resolution(decoded, resolution)
 
 
-def _extract_store_image_results(html: str, title: str, resolution: str, provider: str, limit: int = 18) -> List[Dict[str, Any]]:
+def _extract_store_image_results(html: str, title: str, resolution: str, provider: str, limit: int = 36) -> List[Dict[str, Any]]:
     decoded_html = html_lib.unescape(html)
     candidates = re.findall(
         r'https?:\\?/\\?/image\.api\.playstation\.com[^"\'<>\x1f\s]*',
@@ -713,7 +768,7 @@ def _looks_like_downloadable_image_url(url: str) -> bool:
     return any(token in lower for token in image_tokens) or any(host in lower for host in known_image_hosts)
 
 
-def _extract_google_image_results(html: str, limit: int = 18, resolution: str = "") -> List[Dict[str, Any]]:
+def _extract_google_image_results(html: str, limit: int = 36, resolution: str = "") -> List[Dict[str, Any]]:
     candidates: List[str] = []
     decoded_html = html_lib.unescape(html)
     patterns = [
@@ -801,7 +856,7 @@ def _search_playstation_images_sync(title: str, resolution: str) -> List[Dict[st
     )
     with urlopen(request, timeout=15) as response:
         html = response.read(1_500_000).decode("utf-8", "ignore")
-    return _extract_store_image_results(html, title, resolution, "PlayStation Store", limit=14)
+    return _extract_store_image_results(html, title, resolution, "PlayStation Store", limit=28)
 
 
 def _plain_html_text(value: str) -> str:
@@ -987,7 +1042,7 @@ def _get_playstation_backgrounds_sync(product_url: str, title: str, resolution: 
         raise ValueError("The selected PlayStation Store result is not a product or concept page.")
 
     html = _html_request(absolute_url, timeout=18, referer="https://store.playstation.com/")
-    results = _extract_store_image_results(html, title, resolution, "PlayStation Store", limit=18)
+    results = _extract_store_image_results(html, title, resolution, "PlayStation Store", limit=36)
     for index, result in enumerate(results, 1):
         result["id"] = f"ps-background-{index}"
         result["page_url"] = absolute_url
@@ -1146,7 +1201,7 @@ def _result_for_background_image(service: str, image_url: str, dimensions: Optio
     }
 
 
-def _extract_background_service_results(html: str, service: str, limit: int = 16) -> List[Dict[str, Any]]:
+def _extract_background_service_results(html: str, service: str, limit: int = 32) -> List[Dict[str, Any]]:
     config = BACKGROUND_SERVICE_CONFIGS.get(service)
     if not config:
         return []
@@ -1221,7 +1276,7 @@ def _collect_int_values(value: Any, keys: Tuple[str, ...], limit: int = 8) -> Li
     return found
 
 
-def _collect_igdb_image_urls(value: Any, context: str = "", limit: int = 20) -> List[Tuple[str, Optional[Tuple[int, int]], str]]:
+def _collect_igdb_image_urls(value: Any, context: str = "", limit: int = 40) -> List[Tuple[str, Optional[Tuple[int, int]], str]]:
     results: List[Tuple[str, Optional[Tuple[int, int]], str, str]] = []
     seen = set()
     def add_url(url: str, item: Any, label: str) -> None:
@@ -1331,7 +1386,7 @@ def _search_igdb_playnite_images_sync(title: str, search_query: str = "") -> Lis
         if result:
             result["id"] = f"igdb-direct-{len(results) + 1}"
             results.append(result)
-        if len(results) >= 12:
+        if len(results) >= 24:
             break
     return results
 
@@ -1363,7 +1418,7 @@ def _absolute_url(url: str, base: str) -> str:
     return raw
 
 
-def _extract_alphacoders_detail_urls(html: str, base_url: str, limit: int = 18) -> List[str]:
+def _extract_alphacoders_detail_urls(html: str, base_url: str, limit: int = 36) -> List[str]:
     decoded_html = html_lib.unescape(str(html or "")).replace("\\u0026", "&").replace("\\/", "/")
     candidates: List[str] = []
     candidates.extend(re.findall(r'https?:\\?/\\?/wall\.alphacoders\.com/big\.php\?i=\d+', decoded_html, re.IGNORECASE))
@@ -1395,7 +1450,7 @@ def _extract_alphacoders_detail_urls(html: str, base_url: str, limit: int = 18) 
     return results
 
 
-def _extract_alphacoders_category_urls(html: str, base_url: str, limit: int = 6) -> List[str]:
+def _extract_alphacoders_category_urls(html: str, base_url: str, limit: int = 12) -> List[str]:
     decoded_html = html_lib.unescape(str(html or "")).replace("\\u0026", "&").replace("\\/", "/")
     candidates = re.findall(r'https?:\\?/\\?/(?:www\.)?alphacoders\.com/[^"\'<>\s]+', decoded_html, re.IGNORECASE)
     candidates.extend(re.findall(r'href=["\']([^"\']+)["\']', decoded_html, re.IGNORECASE))
@@ -1422,7 +1477,7 @@ def _extract_alphacoders_category_urls(html: str, base_url: str, limit: int = 6)
     return results
 
 
-def _extract_alphacoders_image_urls(html: str, page_url: str, limit: int = 8) -> List[Tuple[str, Optional[Tuple[int, int]], str, str]]:
+def _extract_alphacoders_image_urls(html: str, page_url: str, limit: int = 16) -> List[Tuple[str, Optional[Tuple[int, int]], str, str]]:
     decoded_html = html_lib.unescape(str(html or "")).replace("\\u0026", "&").replace("\\/", "/")
     page_dimensions = _dimension_from_text(decoded_html)
     candidates: List[str] = []
@@ -1482,7 +1537,7 @@ def _search_alphacoders_images_sync(title: str, search_query: str = "") -> List[
                 if key not in seen_pages:
                     seen_pages.add(key)
                     detail_urls.append(url)
-                if len(detail_urls) >= 12:
+                if len(detail_urls) >= 24:
                     break
             if detail_urls:
                 break
@@ -1501,7 +1556,7 @@ def _search_alphacoders_images_sync(title: str, search_query: str = "") -> List[
                 if key not in seen_pages:
                     seen_pages.add(key)
                     detail_urls.append(url)
-            if len(detail_urls) < 8:
+            if len(detail_urls) < 16:
                 for category_url in _extract_alphacoders_category_urls(html, "https://alphacoders.com/"):
                     try:
                         category_html = _html_request(category_url, timeout=12, referer="https://alphacoders.com/")
@@ -1514,9 +1569,9 @@ def _search_alphacoders_images_sync(title: str, search_query: str = "") -> List[
                         if key not in seen_pages:
                             seen_pages.add(key)
                             detail_urls.append(url)
-                        if len(detail_urls) >= 12:
+                        if len(detail_urls) >= 24:
                             break
-                    if len(detail_urls) >= 12:
+                    if len(detail_urls) >= 24:
                         break
             if detail_urls:
                 break
@@ -1526,7 +1581,7 @@ def _search_alphacoders_images_sync(title: str, search_query: str = "") -> List[
 
     results: List[Dict[str, Any]] = []
     seen_images = set()
-    for page_url in detail_urls[:12]:
+    for page_url in detail_urls[:24]:
         try:
             page_html = _html_request(page_url, timeout=12, referer="https://wall.alphacoders.com/")
         except Exception as error:
@@ -1547,9 +1602,9 @@ def _search_alphacoders_images_sync(title: str, search_query: str = "") -> List[
                 result["thumbnail_url"] = preview_url
                 result["preview_url"] = image_url
             results.append(result)
-            if len(results) >= 16:
+            if len(results) >= 32:
                 break
-        if len(results) >= 16:
+        if len(results) >= 32:
             break
     if not results and last_error:
         _log_warning(f"AlphaCoders search returned no images query={query}: {last_error}")
@@ -1590,7 +1645,7 @@ def _search_background_service_images_sync(title: str, service: str, search_quer
         seen.add(key)
         result["id"] = f"{service}-{len(combined_results) + 1}"
         combined_results.append(result)
-        if len(combined_results) >= 18:
+        if len(combined_results) >= 36:
             break
     return {"query": query, "google_url": google_url, "results": combined_results}
 
@@ -2711,6 +2766,7 @@ class Plugin:
         self.modern_release_after = 0.0
         self.modern_handoff_hwnd = 0
         self.modern_handoff_pid = 0
+        self.launch_action_completed_at = 0.0
         self.last_modern_cover_refocus_at = 0.0
         self.last_modern_cover_refocus_log_at = 0.0
         self.launch_candidate_focus_attempted: set[int] = set()
@@ -3108,10 +3164,17 @@ class Plugin:
     async def set_launch_status(self, payload: Any = "") -> Dict[str, Any]:
         if isinstance(payload, dict):
             text = str(payload.get("text", "") or "")
+            phase = str(payload.get("phase", "") or "").strip().lower()
         else:
             text = str(payload or "")
+            phase = ""
+        if phase == "start":
+            self.launch_action_completed_at = 0.0
+        elif phase == "complete" and self.launch_action_completed_at <= 0:
+            self.launch_action_completed_at = time.time()
+            _log_info("Steam GameAction completion observed")
         self._write_launch_status(text)
-        return {"ok": True}
+        return {"ok": True, "phase": phase}
 
     def _cleanup_black_cover_process(self) -> None:
         if self.black_cover_process is not None and self.black_cover_process.poll() is not None:
@@ -4173,6 +4236,7 @@ class Plugin:
         self.modern_release_after = 0.0
         self.modern_handoff_hwnd = 0
         self.modern_handoff_pid = 0
+        self.launch_action_completed_at = 0.0
         _lr_force = str(game_settings.get("force_mode", "auto") or "auto").strip().lower()
         _lr_mode = _lr_force if _lr_force in ("classic", "modern") else str(self.settings.get("curtain_mode", "modern"))
         self.current_launch_mode = _lr_mode
@@ -4492,6 +4556,17 @@ class Plugin:
                     f"pid={pid} "
                     f"parent={parent_name} "
                     f"parent_pid={parent_pid}"
+                )
+                continue
+
+            if _is_transient_launch_process(process_name):
+                _log_info(
+                    "Detected transient launch bridge "
+                    f"process={process_name} "
+                    f"pid={pid} "
+                    f"parent={parent_name} "
+                    f"parent_pid={parent_pid} "
+                    "candidate=False"
                 )
                 continue
 
@@ -5028,11 +5103,28 @@ class Plugin:
                     if self.modern_active and self.modern_release_after <= 0 and fullscreen_game_window:
                         game_hwnd = int(fullscreen_game_window.get("hwnd", 0) or 0)
                         game_pid = int(fullscreen_game_window.get("pid", 0) or 0)
+                        game_process = str(fullscreen_game_window.get("process", "") or "").lower()
+                        handoff_settle = _modern_handoff_settle_seconds(game_process, game_settle)
+                        post_action_settle = POST_GAME_ACTION_SETTLE_PROCESSES.get(game_process, 0.0)
+                        action_fallback = POST_GAME_ACTION_FALLBACK_PROCESSES.get(game_process, 0.0)
                         if game_pid > 0:
                             self.active_game_pids.setdefault(game_pid, now)
                         if self.game_seen_since <= 0:
                             self.game_seen_since = now
-                        if (now - self.game_seen_since >= game_settle) and (now - self.modern_started_at >= min_visible):
+                        surface_ready = now - self.game_seen_since >= handoff_settle
+                        action_ready = post_action_settle <= 0
+                        readiness_reason = "surface"
+                        if post_action_settle > 0:
+                            action_ready = (
+                                self.launch_action_completed_at > 0
+                                and now - self.launch_action_completed_at >= post_action_settle
+                            )
+                            if action_ready:
+                                readiness_reason = "steam-action-complete"
+                            elif action_fallback > 0 and now - self.game_seen_since >= action_fallback:
+                                action_ready = True
+                                readiness_reason = "bounded-fallback"
+                        if surface_ready and action_ready and (now - self.modern_started_at >= min_visible):
                             self.modern_handoff_hwnd = game_hwnd
                             self.modern_handoff_pid = game_pid
                             self.modern_release_after = now + 2.0
@@ -5040,7 +5132,9 @@ class Plugin:
                             _log_info(
                                 "Modern curtain hand-off armed: tracked game surface settled; "
                                 "curtain remains visible until game focus is verified"
-                                f" kind={ready_kind} pid={game_pid} hwnd={game_hwnd}"
+                                f" kind={ready_kind} pid={game_pid} hwnd={game_hwnd} "
+                                f"process={game_process} settle_seconds={handoff_settle} "
+                                f"readiness={readiness_reason} post_action_settle={post_action_settle}"
                             )
                     elif self.modern_active and self.modern_release_after <= 0 and bool(getattr(self, "current_launch_timeout_enabled", self.settings.get("timeout_enabled", DEFAULT_SETTINGS["timeout_enabled"]))) and self.launch_pending_until > 0 and now >= self.launch_pending_until:
                         _log_info("Modern curtain hand-off: timeout; closing without a game target")

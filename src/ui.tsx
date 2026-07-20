@@ -1,4 +1,5 @@
 import { SP_REACT, SP_JSX, DFL, toaster, openFilePicker } from "./decky";
+import { FaDownload, FaFolderOpen, FaImage, FaRocket, FaTools, FaTrashAlt, FaUndo } from "react-icons/fa";
 import { I18N, getStrings } from "./strings";
 import { playButtonHook } from "./PlayButtonLaunchHook";
 import { getSettings, saveSettings, getStatus, getGameSettings, saveGameSettings, resetGameSettings, validateLaunchImagePath, getImagePreview, searchPlayStationGames, getPlayStationBackgrounds, applyPlayStationAsset, removePlayStationAsset, searchGoogleImages, downloadGoogleImage, buildGameCache, cleanupUnusedLaunchImages, startAutoMode, stopAutoMode, FILE_SELECTION_FILE } from "./backend";
@@ -61,7 +62,7 @@ function LaunchCurtainPageStyles() {
     ` });
 }
 function SettingsCard({ title, description, children, trailing, className = "" }) {
-    return SP_JSX.jsxs(DFL.Focusable, { "flow-children": "vertical", className: `lc-card${className ? ` ${className}` : ""}`, children: [
+    return SP_JSX.jsxs(DFL.Focusable, { "flow-children": "column", className: `lc-card${className ? ` ${className}` : ""}`, children: [
         title || description || trailing ? SP_JSX.jsxs("div", { className: "lc-card__header", children: [
                 SP_JSX.jsxs("div", { className: "lc-card__heading", children: [
                         title ? SP_JSX.jsx("div", { className: "lc-card__title", children: title }) : null,
@@ -71,6 +72,12 @@ function SettingsCard({ title, description, children, trailing, className = "" }
             ] }) : null,
         SP_JSX.jsx("div", { className: "lc-card__body", children: children })
     ] });
+}
+function QamSectionHeading({ icon, children }) {
+    return SP_JSX.jsxs("div", { className: "lcQamSectionLabel", children: [icon, SP_JSX.jsx("span", { children })] });
+}
+function QamButton({ icon, children, ...props }) {
+    return SP_JSX.jsx(DFL.DialogButton, { ...props, className: `lcQamButton${props.className ? ` ${props.className}` : ""}`, children: SP_JSX.jsxs("span", { className: "lcQamButtonInner", children: [icon, SP_JSX.jsx("span", { children })] }) });
 }
 function notify(result, strings) {
     toaster.toast({
@@ -355,40 +362,62 @@ function Content() {
         { data: "off", label: strings.modeOff ?? I18N.en.modeOff ?? "Off" }
     ];
     const selectedCurtainMode = settings?.curtain_mode ?? "modern";
-    return SP_JSX.jsxs(SP_JSX.Fragment, { children: [
-        SP_JSX.jsxs(DFL.PanelSection, { "flow-children": "column", title: strings.automation, children: [
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.DropdownItem, { label: strings.launchMode ?? I18N.en.launchMode ?? "Launch mode", rgOptions: curtainModeOptions, selectedOption: selectedCurtainMode, disabled: busy || !settings, onChange: (option) => {
-                    if (typeof option.data === "string") void setCurtainMode(option.data);
-                } }) }),
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.ToggleField, { label: strings.launchInfo ?? I18N.en.launchInfo ?? "Launch info", checked: Boolean(settings?.show_launch_info), disabled: busy || !settings, onChange: (checked) => { void setShowLaunchInfo(checked); } }) }),
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.ToggleField, { label: strings.timeoutEnabled ?? I18N.en.timeoutEnabled ?? "Enable timeout", checked: settings?.timeout_enabled ?? false, disabled: busy || !settings, onChange: (checked) => { void setTimeoutEnabled(checked); } }) }),
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx("div", { style: { ...rowTextStyle, whiteSpace: "normal" }, children: (settings?.timeout_enabled ?? false)
-                    ? (strings.timeoutHelp ?? I18N.en.timeoutHelp ?? "How long the launch screen can stay visible while waiting for the game to become fullscreen.")
-                    : (strings.timeoutDisabledHelp ?? I18N.en.timeoutDisabledHelp ?? "When disabled, the launch screen hides only after fullscreen detection or manual close.") }) }),
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.DropdownItem, { label: strings.timeout, rgOptions: timeoutOptions, selectedOption: selectedTimeout, disabled: busy || !settings || !(settings.timeout_enabled ?? false), onChange: (option) => {
-                    if (typeof option.data === "number") void setTimeoutValue(option.data);
-                } }) }),
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx("div", { style: { ...rowTextStyle, whiteSpace: "normal" }, children: strings.exitDelayHelp ?? I18N.en.exitDelayHelp ?? "How long Launch Curtain stays visible after detecting that the game is ready." }) }),
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.DropdownItem, { label: strings.exitDelay ?? I18N.en.exitDelay ?? "Exit delay", rgOptions: exitDelayOptions, selectedOption: selectedExitDelay, disabled: busy || !settings, onChange: (option) => {
-                    if (typeof option.data === "number") void setExitDelayValue(option.data);
-                } }) }),
-            playStationBulkStatus ? SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsxs("div", { style: { ...rowTextStyle, whiteSpace: "normal", fontWeight: 650 }, children: [
-                    `${playStationBulkStatus.remove ? strings.removingPlayStationAssets : strings.downloadingPlayStationAssets} (${playStationBulkStatus.current}/${playStationBulkStatus.total})`,
-                    SP_JSX.jsx("div", { style: { color: "white", marginTop: 4 }, children: playStationBulkStatus.title })
-                ] }) }) : null,
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", disabled: busy || !settings, onClick: () => { void runPlayStationBulk(false); }, children: strings.downloadPlayStationAssets }) }),
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", disabled: busy || !settings, onClick: () => { void runPlayStationBulk(true); }, children: strings.removePlayStationAssets }) })
+    return SP_JSX.jsx(DFL.ScrollPanel, { children: SP_JSX.jsxs(DFL.Focusable, { "flow-children": "column", className: "lcQamRedesign", children: [
+        SP_JSX.jsx("style", { children: `
+          .lcQamRedesign,.lcQamRedesign *{box-sizing:border-box;min-width:0;letter-spacing:0}
+          .lcQamRedesign{width:100%;padding:2px 12px 26px 4px;overflow-x:hidden;color:#fff}
+          .lcQamSectionLabel{display:flex;align-items:center;gap:8px;margin:14px 4px 7px;font-size:12px;font-weight:800;text-transform:uppercase;opacity:.56}
+          .lcQamSectionLabel svg{width:13px;height:13px;flex:none}
+          .lcQamCard{width:100%;margin:0 0 9px;padding:12px;border:1px solid rgba(255,255,255,.085);border-radius:6px;background:rgba(255,255,255,.035);overflow:hidden}
+          .lcQamCard [class*="PanelSectionRow"]{width:100%!important;max-width:100%!important;padding-left:0!important;padding-right:0!important}
+          .lcQamCard [class*="Dropdown"]{max-width:100%!important}
+          .lcQamDropdownBlock{display:flex;flex-direction:column;gap:7px;width:100%;padding:8px 0 10px}
+          .lcQamDropdownLabel{font-size:14px;line-height:18px;color:#fff}
+          .lcQamDropdownControl,.lcQamDropdownControl>div,.lcQamDropdownControl [role="combobox"]{width:100%!important;max-width:100%!important}
+          .lcQamHelp{margin:3px 2px 8px;font-size:12px;line-height:1.35;opacity:.57;overflow-wrap:anywhere}
+          .lcQamMeta{margin:0 2px 10px;font-size:12px;line-height:1.35;opacity:.58;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+          .lcQamDivider{height:1px;margin:10px 0;background:rgba(255,255,255,.07)}
+          .lcQamButton{width:100%!important;min-height:38px!important;padding:0 10px!important;border-radius:5px!important;color:#fff!important;font-size:14px!important}
+          .lcQamButtonInner{display:grid;grid-template-columns:18px minmax(0,1fr);align-items:center;gap:9px;width:100%;text-align:left}
+          .lcQamButtonInner svg{width:15px;height:15px;justify-self:center}
+          .lcQamButton:hover,.lcQamButton:focus,.lcQamButton.gpfocus{background:rgba(240,180,41,.16)!important;color:#fff!important;border-color:rgba(240,180,41,.92)!important;box-shadow:0 0 0 2px rgba(240,180,41,.22)!important}
+          .lcQamButton:hover *,.lcQamButton:focus *,.lcQamButton.gpfocus *{color:inherit!important}
+          .lcQamButton:disabled{opacity:.35!important}
+          .lcQamButtonStack{display:grid;gap:7px}
+          .lcQamStatus{padding:9px 10px;margin-bottom:8px;border-radius:5px;background:rgba(240,180,41,.09);font-size:12px;line-height:1.35}
+        ` }),
+        SP_JSX.jsx(QamSectionHeading, { icon: SP_JSX.jsx(FaRocket, {}), children: strings.automation }),
+        SP_JSX.jsxs("section", { className: "lcQamCard", children: [
+            SP_JSX.jsxs(DFL.Focusable, { "flow-children": "column", className: "lcQamDropdownBlock", children: [
+                SP_JSX.jsx("div", { className: "lcQamDropdownLabel", children: strings.launchMode ?? I18N.en.launchMode ?? "Launch mode" }),
+                SP_JSX.jsx("div", { className: "lcQamDropdownControl", children: SP_JSX.jsx(DFL.Dropdown, { menuLabel: strings.launchMode ?? I18N.en.launchMode ?? "Launch mode", rgOptions: curtainModeOptions, selectedOption: selectedCurtainMode, disabled: busy || !settings, onChange: (option) => { if (typeof option.data === "string") void setCurtainMode(option.data); } }) })
+            ] }),
+            SP_JSX.jsx(DFL.ToggleField, { label: strings.launchInfo ?? I18N.en.launchInfo ?? "Launch info", checked: Boolean(settings?.show_launch_info), disabled: busy || !settings, onChange: (checked) => { void setShowLaunchInfo(checked); } }),
+            SP_JSX.jsx(DFL.ToggleField, { label: strings.timeoutEnabled ?? I18N.en.timeoutEnabled ?? "Enable timeout", checked: settings?.timeout_enabled ?? false, disabled: busy || !settings, onChange: (checked) => { void setTimeoutEnabled(checked); } }),
+            SP_JSX.jsx("div", { className: "lcQamHelp", children: (settings?.timeout_enabled ?? false) ? (strings.timeoutHelp ?? I18N.en.timeoutHelp ?? "How long the launch screen can stay visible while waiting for the game to become fullscreen.") : (strings.timeoutDisabledHelp ?? I18N.en.timeoutDisabledHelp ?? "When disabled, the launch screen hides only after fullscreen detection or manual close.") }),
+            SP_JSX.jsx(DFL.DropdownItem, { label: strings.timeout, rgOptions: timeoutOptions, selectedOption: selectedTimeout, disabled: busy || !settings || !(settings.timeout_enabled ?? false), onChange: (option) => { if (typeof option.data === "number") void setTimeoutValue(option.data); } }),
+            SP_JSX.jsx("div", { className: "lcQamHelp", children: strings.exitDelayHelp ?? I18N.en.exitDelayHelp ?? "How long Launch Curtain stays visible after detecting that the game is ready." }),
+            SP_JSX.jsx(DFL.DropdownItem, { label: strings.exitDelay ?? I18N.en.exitDelay ?? "Exit delay", rgOptions: exitDelayOptions, selectedOption: selectedExitDelay, disabled: busy || !settings, onChange: (option) => { if (typeof option.data === "number") void setExitDelayValue(option.data); } }),
+            playStationBulkStatus ? SP_JSX.jsxs("div", { className: "lcQamStatus", children: [`${playStationBulkStatus.remove ? strings.removingPlayStationAssets : strings.downloadingPlayStationAssets} (${playStationBulkStatus.current}/${playStationBulkStatus.total})`, SP_JSX.jsx("div", { style: { marginTop: 3, fontWeight: 700 }, children: playStationBulkStatus.title })] }) : null,
+            SP_JSX.jsxs(DFL.Focusable, { "flow-children": "column", className: "lcQamButtonStack", children: [
+                SP_JSX.jsx(QamButton, { icon: SP_JSX.jsx(FaDownload, {}), disabled: busy || !settings, onClick: () => { void runPlayStationBulk(false); }, children: strings.downloadPlayStationAssets }),
+                SP_JSX.jsx(QamButton, { icon: SP_JSX.jsx(FaTrashAlt, {}), disabled: busy || !settings, onClick: () => { void runPlayStationBulk(true); }, children: strings.removePlayStationAssets })
+            ] })
         ] }),
-        SP_JSX.jsxs(DFL.PanelSection, { "flow-children": "column", title: strings.logo, children: [
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx("div", { style: rowTextStyle, children: settings?.custom_logo_path ? `${strings.customLogo}: ${settings.custom_logo_path}` : strings.defaultLogo }) }),
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", disabled: busy || !settings, onClick: () => { void chooseLogo(); }, children: strings.chooseLogo }) }),
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", disabled: busy || !settings || !settings.custom_logo_path, onClick: () => { void useDefaultLogo(); }, children: strings.useDefaultLogo }) })
+        SP_JSX.jsx(QamSectionHeading, { icon: SP_JSX.jsx(FaImage, {}), children: strings.logo }),
+        SP_JSX.jsxs("section", { className: "lcQamCard", children: [
+            SP_JSX.jsx("div", { className: "lcQamMeta", title: settings?.custom_logo_path || "", children: settings?.custom_logo_path ? `${strings.customLogo}: ${settings.custom_logo_path}` : strings.defaultLogo }),
+            SP_JSX.jsxs(DFL.Focusable, { "flow-children": "column", className: "lcQamButtonStack", children: [
+                SP_JSX.jsx(QamButton, { icon: SP_JSX.jsx(FaFolderOpen, {}), disabled: busy || !settings, onClick: () => { void chooseLogo(); }, children: strings.chooseLogo }),
+                SP_JSX.jsx(QamButton, { icon: SP_JSX.jsx(FaUndo, {}), disabled: busy || !settings || !settings.custom_logo_path, onClick: () => { void useDefaultLogo(); }, children: strings.useDefaultLogo })
+            ] })
         ] }),
-        SP_JSX.jsxs(DFL.PanelSection, { "flow-children": "column", title: strings.maintenance, children: [
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", disabled: busy || !settings, onClick: () => { void createGameCache(); }, children: strings.refreshGameCache }) }),
-            SP_JSX.jsx(DFL.PanelSectionRow, { "flow-children": "row", children: SP_JSX.jsx(DFL.ButtonItem, { layout: "below", disabled: busy || !settings, onClick: () => { void cleanupLaunchImages(); }, children: strings.deleteUnusedImages }) })
-        ] })
-    ] });
+        SP_JSX.jsx(QamSectionHeading, { icon: SP_JSX.jsx(FaTools, {}), children: strings.maintenance }),
+        SP_JSX.jsx("section", { className: "lcQamCard", children: SP_JSX.jsxs(DFL.Focusable, { "flow-children": "column", className: "lcQamButtonStack", children: [
+            SP_JSX.jsx(QamButton, { icon: SP_JSX.jsx(FaTools, {}), disabled: busy || !settings, onClick: () => { void createGameCache(); }, children: strings.refreshGameCache }),
+            SP_JSX.jsx(QamButton, { icon: SP_JSX.jsx(FaTrashAlt, {}), disabled: busy || !settings, onClick: () => { void cleanupLaunchImages(); }, children: strings.deleteUnusedImages })
+        ] }) })
+    ] }) });
 }
 
 const getAppOverviewSafe = (appId) => {
@@ -679,7 +708,7 @@ function LogoEditorSurface({ backdropPath, logoSource, fallbackLogoPath, initial
         SP_JSX.jsx(LaunchCurtainPageStyles, {}),
         SP_JSX.jsx(DFL.ScrollPanel, { children: SP_JSX.jsxs(DFL.Focusable, { "flow-children": "vertical", noFocusRing: true, style: editorPageStyle, children: [
             SP_JSX.jsx(SettingsCard, { title: strings.editorTitle, children: SP_JSX.jsxs("div", { className: "lc-editor-layout", children: [
-                SP_JSX.jsx(DFL.Focusable, { focusable: true, noFocusRing: false, onKeyDown: handlePreviewKeyDown, className: "lc-editor-preview", children: [
+                SP_JSX.jsx("div", { className: "lc-editor-preview", "aria-hidden": true, style: { pointerEvents: "none" }, children: [
                     backdropUrl ? SP_JSX.jsx("img", { src: backdropUrl, className: "lc-editor-preview__backdrop", style: { opacity: draft.background_opacity / 100 } }) : null,
                     logoUrl ? SP_JSX.jsx("img", { src: logoUrl, className: "lc-editor-preview__logo", style: {
                         left: `${draft.logo_position_x}%`,
