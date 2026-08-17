@@ -13,10 +13,23 @@ export function initSteamControllerClose() {
     const S = (typeof SteamClient !== "undefined") ? SteamClient : (window && window.SteamClient);
     if (!S || !S.Input || typeof S.Input.RegisterForControllerInputMessages !== "function") {
       try { scaLog("RegisterForControllerInputMessages unavailable"); } catch (e) {}
-      return;
+      return function () {};
     }
+    const registryKey = "__playhubLaunchCurtainControllerCleanup";
+    try { if (typeof S.Input[registryKey] === "function") S.Input[registryKey](); } catch (e) {}
+    const release = function (registration) {
+      try {
+        if (typeof registration === "function") registration();
+        else if (registration) {
+          if (typeof registration.Unregister === "function") registration.Unregister();
+          else if (typeof registration.unregister === "function") registration.unregister();
+          else if (typeof registration.Dispose === "function") registration.Dispose();
+          else if (typeof registration.dispose === "function") registration.dispose();
+        }
+      } catch (e) {}
+    };
     let curtainRunning = false, curtainSince = 0, lastDbg = 0;
-    setInterval(function () {
+    const statusTimer = window.setInterval(function () {
       try {
         Promise.resolve(getStatus()).then(function (st) {
           const running = !!(st && st.curtain_running);
@@ -26,7 +39,7 @@ export function initSteamControllerClose() {
       } catch (e) {}
     }, 700);
     try { scaLog("SC2 close listener registered (status-gated)"); } catch (e) {}
-    S.Input.RegisterForControllerInputMessages(function () {
+    const registration = S.Input.RegisterForControllerInputMessages(function () {
       try {
         const h = playButtonHook;
         const now = Date.now();
@@ -49,5 +62,13 @@ export function initSteamControllerClose() {
         else hideCurtain();
       } catch (e) {}
     });
+    const cleanup = function () {
+      window.clearInterval(statusTimer);
+      release(registration);
+      try { if (S.Input[registryKey] === cleanup) delete S.Input[registryKey]; } catch (e) {}
+    };
+    S.Input[registryKey] = cleanup;
+    return cleanup;
   } catch (e) {}
+  return function () {};
 }

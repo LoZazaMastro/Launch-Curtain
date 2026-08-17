@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 import shutil
+import unicodedata
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from ctypes import wintypes
@@ -23,6 +24,7 @@ import decky
 
 
 PLAYHUB_YELLOW = "#FCCC01"
+MODERN_FAIL_OPEN_SECONDS = 75.0
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "settings_version": 14,
@@ -98,6 +100,13 @@ WM_CLOSE = 0x0010
 MONITOR_DEFAULTTONEAREST = 0x00000002
 FULLSCREEN_TOLERANCE = 18
 APP_ID_MAX = 0x100000000
+GWL_EXSTYLE = -20
+WS_EX_TOOLWINDOW = 0x00000080
+WS_EX_NOACTIVATE = 0x08000000
+SPLASH_LINEAGE_SURFACE_SETTLE_SECONDS = 0.75
+SPLASH_LINEAGE_FULLSCREEN_SETTLE_SECONDS = 0.75
+SPLASH_LINEAGE_POST_ACTION_SETTLE_SECONDS = 0.75
+SPLASH_LINEAGE_BORDERLESS_FALLBACK_SECONDS = 45.0
 
 STEAM_PROCESS_NAMES = {
     "steam.exe",
@@ -126,6 +135,16 @@ STORE_WALLPAPER_RESOLUTIONS = {
 
 STORE_WALLPAPER_DIMENSIONS = set(STORE_WALLPAPER_RESOLUTIONS.values())
 REMOTE_IMAGE_DIMENSION_CACHE: Dict[str, Optional[Tuple[int, int]]] = {}
+
+# PlayStation Store search is backed by the same persisted GraphQL operation used
+# by the current Store web app.  The previous HTML-only search parser is retained
+# as a fallback because Sony can still serve static tiles in some regions/caches.
+PS_STORE_GRAPHQL_URL = "https://web.np.playstation.com/api/graphql/v1//op"
+PS_STORE_SEARCH_OPERATION = "getSearchResults"
+PS_STORE_SEARCH_HASH = "4df6284f982e57bec70f23c77e2c219dc792eb19af7fb3d3a81767aa3f1958aa"
+PS_STORE_CLIENT_NAME = "@sie-ppr-web-store/app"
+PS_STORE_CLIENT_VERSION = "0.113.0"
+PS_STORE_SEARCH_MEDIA_CACHE: Dict[str, List[str]] = {}
 
 IMAGE_CONTENT_EXTENSIONS = {
     "image/jpeg": ".jpg",
@@ -211,23 +230,6 @@ TRANSIENT_LAUNCH_PROCESS_HINTS = (
     "setup.exe",
 )
 
-# A few games create a genuine fullscreen window for their startup splash and then
-# reuse the same process/HWND for the renderer. Geometry cannot distinguish those
-# phases, so wait for a longer stable surface before handing focus to these games.
-LONG_FULLSCREEN_SPLASH_PROCESSES = {
-    "forzahorizon6.exe": 10.0,
-}
-
-# These games reuse the startup splash window for the final renderer. Steam's
-# GameAction completion is the only reliable phase boundary available to us.
-POST_GAME_ACTION_SETTLE_PROCESSES = {
-    "forzahorizon6.exe": 8.0,
-}
-POST_GAME_ACTION_FALLBACK_PROCESSES = {
-    "forzahorizon6.exe": 30.0,
-}
-
-
 def _is_transient_launch_process(process_name: str) -> bool:
     name = str(process_name or "").strip().lower()
     return bool(name) and (
@@ -237,8 +239,7 @@ def _is_transient_launch_process(process_name: str) -> bool:
 
 
 def _modern_handoff_settle_seconds(process_name: str, configured_seconds: float) -> float:
-    name = str(process_name or "").strip().lower()
-    return max(float(configured_seconds), LONG_FULLSCREEN_SPLASH_PROCESSES.get(name, 0.0))
+    return max(0.0, float(configured_seconds))
 
 
 class PROCESSENTRY32W(ctypes.Structure):
@@ -262,6 +263,20 @@ class MONITORINFO(ctypes.Structure):
         ("rcMonitor", wintypes.RECT),
         ("rcWork", wintypes.RECT),
         ("dwFlags", wintypes.DWORD)
+    ]
+
+
+class GUITHREADINFO(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("hwndActive", wintypes.HWND),
+        ("hwndFocus", wintypes.HWND),
+        ("hwndCapture", wintypes.HWND),
+        ("hwndMenuOwner", wintypes.HWND),
+        ("hwndMoveSize", wintypes.HWND),
+        ("hwndCaret", wintypes.HWND),
+        ("rcCaret", wintypes.RECT)
     ]
 
 
@@ -877,30 +892,75 @@ _PS_ADDON_TOKENS = (
     "pacchetto", "aggiuntivo", "espansione", "pass auto", "valuta", "crediti",
     "potenziamento", "tema", "colonna sonora",
 )
+_PS_IGNORED_MARKS = (
+    "\u00ae", "\u2122", "\u00a9", "\u2120", "\u24c7", "\ufffd",
+)
+_PS_PLATFORM_SUFFIX = re.compile(
+    r"(?:\s*[-\u2013\u2014|:/]?\s*)"
+    r"(?:(?:for\s+)?(?:ps[345]|playstation\s*[345]|ps\s*vr2?|playstation\s*vr2?))"
+    r"(?:\s*(?:&|and|/)\s*(?:(?:for\s+)?(?:ps[345]|playstation\s*[345]|ps\s*vr2?|playstation\s*vr2?)))*"
+    r"\s*$",
+    re.IGNORECASE,
+)
+
+
+def _ps_strip_search_noise(value: str) -> str:
+    text = html_lib.unescape(str(value or ""))
+    for mark in _PS_IGNORED_MARKS:
+        text = text.replace(mark, " ")
+    return _PS_PLATFORM_SUFFIX.sub(" ", text)
 
 def _ps_normalize_title(value: str) -> str:
-    text = html_lib.unescape(str(value or "")).lower()
-    for ch in ("\u00ae", "\u2122", "\u00a9"):
+    text = _ps_strip_search_noise(value).lower()
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(character for character in text if not unicodedata.combining(character))
+    for ch in _PS_IGNORED_MARKS:
         text = text.replace(ch, "")
+    text = text.replace("&", " and ")
     text = _PS_EDITION_WORDS.sub(" ", text)
     text = re.sub(r"[^a-z0-9]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _ps_search_query(value: str) -> str:
+    text = _ps_strip_search_noise(value).strip()
+    text = unicodedata.normalize("NFKC", text)
+    for ch in _PS_IGNORED_MARKS:
+        text = text.replace(ch, " ")
+    text = text.replace("&", " and ")
+    text = "".join(character if character.isalnum() else " " for character in text)
+    return re.sub(r"\s+", " ", text).strip()
+
 
 def _ps_is_addon(title: str, product_type: str = "") -> bool:
     low = html_lib.unescape(str(title or "")).lower()
     type_low = html_lib.unescape(str(product_type or "")).strip().lower()
     addon_types = {
         "add-on", "addon", "add-on pack", "level", "item", "costume", "weapons",
-        "weapon", "vehicle", "currency", "virtual currency", "map", "theme",
+        "weapon", "vehicle", "currency", "virtual currency", "map", "theme", "demo",
         "contenuto aggiuntivo", "livello", "elemento", "costume", "armi", "arma",
         "veicolo", "valuta virtuale", "mappa", "tema",
+        # Current PlayStation Store GraphQL classifications.
+        "add_on", "add_on_pack", "character", "costume", "game_level", "item",
+        "virtual_currency", "demo",
     }
     return type_low in addon_types or any(tok in low for tok in _PS_ADDON_TOKENS)
 
 def _ps_title_safe_match(query: str, title: str) -> bool:
     nq = _ps_normalize_title(query)
     nt = _ps_normalize_title(title)
-    return bool(nq) and nq == nt
+    if not nq or not nt:
+        return False
+    if nq == nt:
+        return True
+
+    # Punctuation is presentation, not identity. Compact comparison accepts the
+    # same title written as "Spider-Man"/"Spider Man", "NieR:Automata"/
+    # "NieR Automata" or with typographic apostrophes, while still requiring every
+    # significant letter and number to match exactly after edition words are removed.
+    compact_query = nq.replace(" ", "")
+    compact_title = nt.replace(" ", "")
+    return len(compact_query) >= 4 and compact_query == compact_title
 
 
 def _extract_playstation_game_results(
@@ -1002,13 +1062,329 @@ def _extract_playstation_game_results(
     return results
 
 
-def _search_playstation_games_sync(search_query: str) -> Dict[str, Any]:
+def _ps_store_locale_parts() -> Tuple[str, str, str]:
+    """Return Store locale, country code and GraphQL language code.
+
+    The Store GraphQL endpoint needs explicit region/language variables. On Windows
+    we can ask the OS for the user's BCP-47 locale (for example ``it-IT``); other
+    platforms use locale-related environment variables.  We deliberately fall back
+    to en-US instead of failing the Store search when a locale cannot be resolved.
+    """
+    locale_name = ""
+    if _is_windows():
+        try:
+            buffer = ctypes.create_unicode_buffer(85)
+            if ctypes.windll.kernel32.GetUserDefaultLocaleName(buffer, len(buffer)):
+                locale_name = str(buffer.value or "")
+        except Exception:
+            locale_name = ""
+
+    if not locale_name:
+        for key in ("LC_ALL", "LC_MESSAGES", "LANG"):
+            raw = str(os.environ.get(key, "") or "").split(".", 1)[0].replace("_", "-").strip()
+            if raw:
+                locale_name = raw
+                break
+
+    normalized = re.sub(r"[^A-Za-z0-9-]+", "-", locale_name).strip("-").lower()
+    parts = [part for part in normalized.split("-") if part]
+    if len(parts) < 2:
+        normalized = "en-us"
+        parts = ["en", "us"]
+
+    country = parts[-1].upper() if len(parts[-1]) == 2 else "US"
+    language = parts[0].lower() if parts else "en"
+    if language == "zh" and len(parts) >= 3 and parts[1] == "hant":
+        language = "ch"
+    store_locale = normalized if len(parts[-1]) == 2 else "en-us"
+    return store_locale, country, language
+
+
+def _ps_graphql_media_list(value: Any) -> List[Dict[str, str]]:
+    media: List[Dict[str, str]] = []
+    if not isinstance(value, list):
+        return media
+    seen = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or item.get("src") or item.get("imageUrl") or "").strip()
+        if not url:
+            continue
+        url = html_lib.unescape(url).replace("\\/", "/")
+        if url.startswith("//"):
+            url = f"https:{url}"
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            continue
+        key = url.split("?", 1)[0].lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        media.append({
+            "url": url,
+            "role": str(item.get("role") or ""),
+            "type": str(item.get("type") or ""),
+        })
+    return media
+
+
+def _ps_graphql_platforms(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    result: List[str] = []
+    seen = set()
+    for item in value:
+        if isinstance(item, str):
+            label = item.strip()
+        elif isinstance(item, dict):
+            label = str(item.get("name") or item.get("platform") or item.get("value") or "").strip()
+        else:
+            label = ""
+        if not label:
+            continue
+        key = label.lower()
+        if key not in seen:
+            seen.add(key)
+            result.append(label)
+    return result
+
+
+def _ps_graphql_cover_url(media: List[Dict[str, str]]) -> str:
+    # UniversalPSNMetadata treats MASTER / PORTRAIT_BANNER / EDITION_KEY_ART /
+    # GAMEHUB_COVER_ART as media *roles*; `type` is normally just IMAGE.
+    preferred_roles = {
+        "MASTER": 120,
+        "PORTRAIT_BANNER": 110,
+        "EDITION_KEY_ART": 100,
+        "GAMEHUB_COVER_ART": 90,
+    }
+    ranked: List[Tuple[int, str]] = []
+    for item in media:
+        if item.get("type", "").upper() not in {"", "IMAGE"}:
+            continue
+        role = item.get("role", "").upper()
+        score = preferred_roles.get(role, 10)
+        if role in {"BACKGROUND", "SIXTEEN_BY_NINE_BANNER"}:
+            score = -10
+        ranked.append((score, item.get("url", "")))
+    ranked.sort(key=lambda pair: pair[0], reverse=True)
+    return ranked[0][1] if ranked and ranked[0][1] else ""
+
+
+def _ps_graphql_background_urls(media: List[Dict[str, str]]) -> List[str]:
+    ranked: List[Tuple[int, str]] = []
+    for item in media:
+        role = item.get("role", "").upper()
+        kind = item.get("type", "").upper()
+        if kind not in {"", "IMAGE"}:
+            continue
+        value = 0
+        if role == "BACKGROUND":
+            value += 200
+        if role == "SIXTEEN_BY_NINE_BANNER":
+            value += 180
+        if role == "MASTER":
+            value += 20
+        if role in {"PORTRAIT_BANNER", "EDITION_KEY_ART", "GAMEHUB_COVER_ART"}:
+            value -= 120
+        if value > 0:
+            ranked.append((value, item.get("url", "")))
+    ranked.sort(key=lambda pair: pair[0], reverse=True)
+    seen = set()
+    urls: List[str] = []
+    for _, url in ranked:
+        key = url.split("?", 1)[0].lower()
+        if url and key not in seen:
+            seen.add(key)
+            urls.append(url)
+    return urls
+
+
+def _extract_playstation_graphql_results(payload: Any, store_locale: str, limit: int = 60) -> List[Dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    if payload.get("errors"):
+        messages = []
+        for error in payload.get("errors") or []:
+            if isinstance(error, dict) and error.get("message"):
+                messages.append(str(error.get("message")))
+        raise RuntimeError("; ".join(messages) or "PlayStation Store GraphQL error")
+
+    data = payload.get("data")
+    universal = data.get("universalSearch") if isinstance(data, dict) else None
+    raw_results = universal.get("results") if isinstance(universal, dict) else None
+    if not isinstance(raw_results, list):
+        return []
+
+    results: List[Dict[str, Any]] = []
+    seen = set()
+    for index, item in enumerate(raw_results):
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("name") or item.get("title") or "").strip()
+        item_id = str(item.get("id") or item.get("conceptId") or item.get("productId") or "").strip()
+        typename = str(item.get("__typename") or item.get("type") or "").strip()
+        lower_type = typename.lower()
+        path_kind = "concept" if "concept" in lower_type else "product"
+        direct_url = str(item.get("url") or item.get("href") or "").strip()
+        if direct_url:
+            product_url = _absolute_url(direct_url, "https://store.playstation.com/").split("#", 1)[0]
+        elif item_id:
+            product_url = f"https://store.playstation.com/{store_locale}/{path_kind}/{quote(item_id, safe='-_.')}"
+        else:
+            product_url = ""
+
+        if not title or not product_url:
+            continue
+        parsed = urlparse(product_url)
+        if parsed.netloc.lower() not in {"store.playstation.com", "www.store.playstation.com"}:
+            continue
+        key = (item_id or product_url).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+
+        media = _ps_graphql_media_list(item.get("media"))
+        classification = str(
+            item.get("storeDisplayClassification")
+            or item.get("localizedStoreDisplayClassification")
+            or item.get("productType")
+            or ""
+        ).strip()
+        platforms = _ps_graphql_platforms(item.get("platforms"))
+        results.append({
+            "id": f"ps-api-{index}-{_safe_filename_fragment(item_id or str(index), 'result')}",
+            "title": title,
+            "product_id": item_id,
+            "product_url": product_url,
+            "cover_url": _ps_graphql_cover_url(media),
+            "background_urls": _ps_graphql_background_urls(media),
+            "platforms": platforms,
+            "price": "",
+            "product_type": classification,
+            "source": "PlayStation Store",
+        })
+        if len(results) >= limit:
+            break
+    return results
+
+
+def _ps_store_locale_header(store_locale: str) -> str:
+    """Format a Store locale exactly like the Playnite PSN provider (e.g. it-IT)."""
+    parts = [part for part in str(store_locale or "en-us").replace("_", "-").split("-") if part]
+    if len(parts) < 2:
+        parts = ["en", "us"]
+    normalized: List[str] = []
+    for index, part in enumerate(parts):
+        normalized.append(part.upper() if index == len(parts) - 1 else part.lower())
+    return "-".join(normalized)
+
+
+def _ps_graphql_search_url(provider_query: str, country_code: str, language_code: str) -> str:
+    """Build the persisted-query URL with Uri.EscapeDataString-equivalent escaping."""
+    variables = json.dumps({
+        "countryCode": country_code,
+        "languageCode": language_code,
+        "nextCursor": "",
+        "pageOffset": 0,
+        "pageSize": 24,
+        "searchTerm": provider_query,
+    }, separators=(",", ":"), ensure_ascii=False)
+    extensions = json.dumps({
+        "persistedQuery": {
+            "version": 1,
+            "sha256Hash": PS_STORE_SEARCH_HASH,
+        }
+    }, separators=(",", ":"))
+    # .NET's Uri.EscapeDataString (used by UniversalPSNMetadata) emits %20 for
+    # spaces rather than application/x-www-form-urlencoded '+'. Mirror it here.
+    return (
+        f"{PS_STORE_GRAPHQL_URL}?operationName={PS_STORE_SEARCH_OPERATION}"
+        f"&variables={quote(variables, safe='')}"
+        f"&extensions={quote(extensions, safe='')}"
+    )
+
+
+def _search_playstation_graphql_sync(search_query: str) -> Dict[str, Any]:
     query = str(search_query or "").strip()
-    # The region-less endpoint follows the active Store locale and, importantly,
-    # returns concept/pre-release tiles as well as purchasable products.
-    search_url = f"https://store.playstation.com/search/{quote(query, safe='')}"
-    html = _html_request(search_url, timeout=18, referer="https://store.playstation.com/")
-    raw_results = _extract_playstation_game_results(html, search_url)
+    provider_query = _ps_search_query(query) or query
+    primary_locale, primary_country, primary_language = _ps_store_locale_parts()
+    attempts: List[Tuple[str, str, str]] = [(primary_locale, primary_country, primary_language)]
+    if primary_locale.lower() != "en-us":
+        # Some Store deployments occasionally return an empty regional catalog even
+        # though the same public product is present in the US catalog. Search the
+        # user's locale first, then fall back to en-US rather than reporting nothing.
+        attempts.append(("en-us", "US", "en"))
+
+    last_error: Optional[Exception] = None
+    last_result: Dict[str, Any] = {}
+    for store_locale, country_code, language_code in attempts:
+        search_url = _ps_graphql_search_url(provider_query, country_code, language_code)
+        request_id = str(uuid.uuid4())
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Origin": "https://store.playstation.com",
+            "Referer": "https://store.playstation.com/",
+            "apollographql-client-name": PS_STORE_CLIENT_NAME,
+            "apollographql-client-version": PS_STORE_CLIENT_VERSION,
+            "X-PSN-App-Ver": f"{PS_STORE_CLIENT_NAME}/{PS_STORE_CLIENT_VERSION}-",
+            "X-PSN-Correlation-ID": request_id,
+            "X-PSN-Request-ID": str(uuid.uuid4()),
+            "X-PSN-Store-Locale-Override": _ps_store_locale_header(store_locale),
+        }
+        try:
+            request = Request(search_url, headers=headers)
+            with urlopen(request, timeout=20) as response:
+                raw = response.read(3_000_000).decode("utf-8", "ignore")
+            payload = json.loads(raw)
+            results = _extract_playstation_graphql_results(payload, store_locale)
+            last_result = {
+                "query": query,
+                "provider_query": provider_query,
+                "search_url": search_url,
+                "store_locale": store_locale,
+                "results": results,
+            }
+            _log_info(
+                f"PlayStation Store GraphQL raw search query={query} locale={store_locale} "
+                f"results={len(results)}"
+            )
+            if results:
+                for item in results:
+                    product_url = str(item.get("product_url") or "").split("#", 1)[0]
+                    background_urls = [str(url) for url in (item.get("background_urls") or []) if str(url).strip()]
+                    if product_url and background_urls:
+                        PS_STORE_SEARCH_MEDIA_CACHE[product_url.lower()] = background_urls[:12]
+                if len(PS_STORE_SEARCH_MEDIA_CACHE) > 256:
+                    PS_STORE_SEARCH_MEDIA_CACHE.clear()
+                    for item in results:
+                        product_url = str(item.get("product_url") or "").split("#", 1)[0]
+                        background_urls = [str(url) for url in (item.get("background_urls") or []) if str(url).strip()]
+                        if product_url and background_urls:
+                            PS_STORE_SEARCH_MEDIA_CACHE[product_url.lower()] = background_urls[:12]
+                return last_result
+        except Exception as error:
+            last_error = error
+            _log_warning(
+                f"PlayStation Store GraphQL request failed query={query} locale={store_locale}: {error}"
+            )
+
+    if last_result:
+        return last_result
+    if last_error is not None:
+        raise last_error
+    return {
+        "query": query,
+        "provider_query": provider_query,
+        "search_url": "",
+        "store_locale": primary_locale,
+        "results": [],
+    }
+
+def _filter_playstation_search_results(query: str, raw_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
     for item in raw_results:
         title = item.get("title", "")
@@ -1017,18 +1393,49 @@ def _search_playstation_games_sync(search_query: str) -> Dict[str, Any]:
         if safe:
             results.append(item)
             continue
-        # non sicuri: teniamo solo cio' che sembra un GIOCO vero (no add-on, no varianti
-        # con anno tipo "... 2021 McLaren 620R", che sono DLC auto).
+        # Keep only game-like results. The GraphQL classification lets us discard
+        # add-ons reliably, while this title fallback also protects the legacy HTML path.
         if _ps_is_addon(title, str(item.get("product_type", ""))):
             continue
         if re.search(r"\b(19|20)\d{2}\b", _ps_normalize_title(title)):
             continue
         results.append(item)
-    # i match "sicuri" (titolo uguale dopo aver tolto edizioni/simboli) vengono per primi
     results.sort(key=lambda item: 0 if item.get("safe") else 1)
+    return results
+
+
+def _search_playstation_games_sync(search_query: str) -> Dict[str, Any]:
+    query = str(search_query or "").strip()
+    provider_query = _ps_search_query(query) or query
+
+    # Primary path: current PlayStation Store GraphQL search, matching the Store web
+    # client and the updated Universal PSN Metadata provider.
+    try:
+        api_result = _search_playstation_graphql_sync(query)
+        api_results = _filter_playstation_search_results(query, list(api_result.get("results") or []))
+        if api_results:
+            _log_info(
+                f"PlayStation Store GraphQL search query={query} locale={api_result.get('store_locale')} "
+                f"results={len(api_results)}"
+            )
+            api_result["results"] = api_results
+            api_result["provider"] = "graphql"
+            return api_result
+        _log_warning(f"PlayStation Store GraphQL search returned no usable games query={query}; trying HTML fallback")
+    except Exception as error:
+        _log_warning(f"PlayStation Store GraphQL search failed query={query}: {error}; trying HTML fallback")
+
+    # Compatibility fallback for Store variants/caches that still render product
+    # tiles into the initial HTML response.
+    search_url = f"https://store.playstation.com/search/{quote(provider_query, safe='')}"
+    html = _html_request(search_url, timeout=18, referer="https://store.playstation.com/")
+    raw_results = _extract_playstation_game_results(html, search_url)
+    results = _filter_playstation_search_results(query, raw_results)
     return {
         "query": query,
+        "provider_query": provider_query,
         "search_url": search_url,
+        "provider": "html-fallback",
         "results": results,
     }
 
@@ -1041,8 +1448,52 @@ def _get_playstation_backgrounds_sync(product_url: str, title: str, resolution: 
     if not any(token in parsed_url.path.lower() for token in ("/product/", "/concept/")):
         raise ValueError("The selected PlayStation Store result is not a product or concept page.")
 
-    html = _html_request(absolute_url, timeout=18, referer="https://store.playstation.com/")
-    results = _extract_store_image_results(html, title, resolution, "PlayStation Store", limit=36)
+    results: List[Dict[str, Any]] = []
+    seen = set()
+
+    # The modern search API already returns media metadata. Use those assets first so
+    # selecting a game still works even if Sony changes the product-page HTML again.
+    cached_urls = PS_STORE_SEARCH_MEDIA_CACHE.get(absolute_url.lower(), [])
+    for image_url in cached_urls:
+        key = image_url.split("?", 1)[0].lower()
+        if key in seen:
+            continue
+        dimensions = _fetch_remote_image_dimensions(image_url)
+        if not _store_image_has_exact_wallpaper_dimensions(dimensions):
+            continue
+        seen.add(key)
+        results.append({
+            "id": f"ps-api-background-{len(results) + 1}",
+            "image_url": image_url,
+            "thumbnail_url": image_url,
+            "source": "PlayStation Store",
+            "width": dimensions[0],
+            "height": dimensions[1],
+            "resolution": _dimension_label(dimensions),
+            "page_url": absolute_url,
+        })
+
+    try:
+        html = _html_request(absolute_url, timeout=18, referer="https://store.playstation.com/")
+        html_results = _extract_store_image_results(html, title, resolution, "PlayStation Store", limit=36)
+        for result in html_results:
+            image_url = str(result.get("image_url") or "")
+            key = image_url.split("?", 1)[0].lower()
+            if not image_url or key in seen:
+                continue
+            seen.add(key)
+            result["page_url"] = absolute_url
+            results.append(result)
+            if len(results) >= 36:
+                break
+    except Exception as error:
+        if not results:
+            raise
+        _log_warning(
+            f"PlayStation Store product page fallback failed url={absolute_url}: {error}; "
+            f"using {len(results)} GraphQL media result(s)"
+        )
+
     for index, result in enumerate(results, 1):
         result["id"] = f"ps-background-{index}"
         result["page_url"] = absolute_url
@@ -1071,6 +1522,14 @@ BACKGROUND_SERVICE_CONFIGS: Dict[str, Dict[str, str]] = {
     "alphacoders": {
         "label": "AlphaCoders",
         "query_suffix": "video game wallpaper site:alphacoders.com OR site:wall.alphacoders.com"
+    },
+    "nintendo": {
+        "label": "Nintendo",
+        "query_suffix": ""
+    },
+    "xbox": {
+        "label": "Xbox",
+        "query_suffix": ""
     }
 }
 
@@ -1477,138 +1936,927 @@ def _extract_alphacoders_category_urls(html: str, base_url: str, limit: int = 12
     return results
 
 
-def _extract_alphacoders_image_urls(html: str, page_url: str, limit: int = 16) -> List[Tuple[str, Optional[Tuple[int, int]], str, str]]:
-    decoded_html = html_lib.unescape(str(html or "")).replace("\\u0026", "&").replace("\\/", "/")
-    page_dimensions = _dimension_from_text(decoded_html)
-    candidates: List[str] = []
-    for pattern in (
-        r'https?:\\?/\\?/images\d*\.alphacoders\.com/[^"\'<>\s]+?\.(?:jpg|jpeg|png|webp)',
-        r'(?:src|data-src|href)=["\']([^"\']*images\d*\.alphacoders\.com/[^"\']+)'
-    ):
-        for match in re.finditer(pattern, decoded_html, re.IGNORECASE):
-            candidates.append(match.group(1) if match.lastindex else match.group(0))
+def _alphacoders_dimensions_from_context(context: str, image_id: str = "") -> Optional[Tuple[int, int]]:
+    text = html_lib.unescape(str(context or "")).replace("\\/", "/")
+    # Prefer dimensions encoded in *this wallpaper's* thumbnail. On category
+    # pages the surrounding text may also contain the previous/next card's WxH.
+    if image_id:
+        match = re.search(rf"thumb(?:big)?-(\d{{3,5}})-(\d{{3,5}})-{re.escape(str(image_id))}\.", text, re.IGNORECASE)
+        if match:
+            dims = (int(match.group(1)), int(match.group(2)))
+            if _looks_like_background_dimensions(dims):
+                return dims
+    dims = _dimension_from_text(text)
+    if _looks_like_background_dimensions(dims):
+        return dims
+    return None
 
-    results: List[Tuple[str, Optional[Tuple[int, int]], str, str]] = []
-    seen = set()
-    for raw_url in candidates:
-        preview_url = _absolute_url(raw_url, page_url)
+
+def _alphacoders_primary_candidates(context: str, base_url: str, image_id: str) -> List[str]:
+    decoded = html_lib.unescape(str(context or "")).replace("\\u0026", "&").replace("\\/", "/")
+    candidates: List[str] = []
+    patterns = (
+        r"https?://images\d*\.alphacoders\.com/[^\"'<>\s]+?\.(?:jpg|jpeg|png|webp)",
+        r"(?:src|data-src|data-original|href)=[\"']([^\"']*images\d*\.alphacoders\.com/[^\"']+)[\"']",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, decoded, re.IGNORECASE):
+            raw = match.group(1) if match.lastindex else match.group(0)
+            preview = _absolute_url(raw, base_url)
+            normalized = _normalize_background_service_image_url(preview, "alphacoders")
+            parsed = urlparse(normalized)
+            stem = os.path.basename(parsed.path).rsplit(".", 1)[0]
+            if stem == str(image_id):
+                candidates.append(preview)
+    return candidates
+
+
+def _extract_alphacoders_image_urls(html: str, page_url: str, limit: int = 1) -> List[Tuple[str, Optional[Tuple[int, int]], str, str]]:
+    """Return only the wallpaper identified by ``big.php?i=<id>``.
+
+    Detail pages also contain a related-wallpaper grid.  The page id is therefore
+    the authority: images belonging to another id are ignored completely.
+    """
+    decoded = html_lib.unescape(str(html or "")).replace("\\u0026", "&").replace("\\/", "/")
+    page_id = (parse_qs(urlparse(page_url).query).get("i") or [""])[0]
+    if not str(page_id).isdigit():
+        return []
+    dims = _alphacoders_dimensions_from_context(decoded, page_id)
+    for preview_url in _alphacoders_primary_candidates(decoded, page_url, page_id):
         image_url = _normalize_background_service_image_url(preview_url, "alphacoders")
-        if preview_url == image_url:
-            preview_url = ""
-        parsed = urlparse(image_url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc.lower().endswith(".alphacoders.com"):
+        if not _service_image_url_matches(image_url, "alphacoders", decoded):
             continue
-        if not _service_image_url_matches(image_url, "alphacoders", decoded_html):
+        # Never probe every related image. At most one bounded probe is allowed,
+        # and only for the primary wallpaper if AlphaCoders omitted its resolution.
+        resolved_dims = dims
+        if not _looks_like_background_dimensions(resolved_dims):
+            resolved_dims = _fetch_remote_image_dimensions(image_url, max_bytes=2 * 1024 * 1024)
+        if not _looks_like_background_dimensions(resolved_dims):
             continue
-        key = image_url.split("?", 1)[0].lower()
-        if key in seen:
+        thumb = preview_url if preview_url != image_url else ""
+        return [(image_url, resolved_dims, "AlphaCoders background", thumb)]
+    return []
+
+
+def _extract_alphacoders_category_images(html: str, category_url: str, limit: int = 18) -> List[Dict[str, Any]]:
+    """Build full-size wallpaper results directly from the category page.
+
+    The category cards already expose the wallpaper id, thumbnail and resolution,
+    so opening one detail page per result is unnecessary in the common case.
+    """
+    decoded = html_lib.unescape(str(html or "")).replace("\\u0026", "&").replace("\\/", "/")
+    results: List[Dict[str, Any]] = []
+    seen = set()
+    id_pattern = re.compile(r"(?:https?://wall\.alphacoders\.com/)?big\.php\?[^\"'<>\s]*?\bi=(\d+)", re.IGNORECASE)
+    matches = list(id_pattern.finditer(decoded))
+    for index, match in enumerate(matches):
+        image_id = match.group(1)
+        if image_id in seen:
             continue
-        seen.add(key)
-        dimensions = _fetch_remote_image_dimensions(image_url) or page_dimensions
-        if not _looks_like_background_dimensions(dimensions):
+        # Keep each card's search window bounded by neighbouring big.php links so
+        # a thumbnail from the next card cannot be paired with this wallpaper id.
+        left = max(0, matches[index - 1].end() if index else match.start() - 1800)
+        right = min(len(decoded), matches[index + 1].start() if index + 1 < len(matches) else match.end() + 2600)
+        context = decoded[left:right]
+        candidates = _alphacoders_primary_candidates(context, category_url, image_id)
+        if not candidates:
+            # Some layouts place the thumbnail just before the detail link.
+            context = decoded[max(0, match.start() - 3000):min(len(decoded), match.end() + 3000)]
+            candidates = _alphacoders_primary_candidates(context, category_url, image_id)
+        if not candidates:
             continue
-        results.append((image_url, dimensions, "AlphaCoders background", preview_url))
+        preview_url = candidates[0]
+        image_url = _normalize_background_service_image_url(preview_url, "alphacoders")
+        dims = _alphacoders_dimensions_from_context(context, image_id)
+        if not _looks_like_background_dimensions(dims):
+            continue
+        result = _result_for_background_image("alphacoders", image_url, dims, "AlphaCoders background")
+        if not result:
+            continue
+        seen.add(image_id)
+        result["id"] = f"alphacoders-{image_id}"
+        result["page_url"] = f"https://wall.alphacoders.com/big.php?i={image_id}"
+        if preview_url != image_url:
+            result["thumbnail_url"] = preview_url
+            result["preview_url"] = image_url
+        results.append(result)
         if len(results) >= limit:
             break
     return results
 
-
 def _search_alphacoders_images_sync(title: str, search_query: str = "") -> List[Dict[str, Any]]:
-    raw_query = str(search_query or "").strip() or title.strip()
-    query = f"{raw_query} video game wallpaper".strip()
-    detail_urls: List[str] = []
-    seen_pages = set()
-    last_error = ""
-
+    raw_query = str(search_query or "").strip() or str(title or "").strip()
+    if not raw_query:
+        return []
     slug = re.sub(r"[^a-z0-9]+", "-", raw_query.lower()).strip("-")
-    if slug:
-        direct_category_urls = [
-            f"https://alphacoders.com/{slug}-wallpapers",
-            f"https://alphacoders.com/{slug}",
-        ]
-        for category_url in direct_category_urls:
+    detail_urls: List[str] = []
+    category_html = ""
+    category_url = f"https://alphacoders.com/{slug}-wallpapers" if slug else ""
+
+    if category_url:
+        try:
+            category_html = _html_request(category_url, timeout=5, referer="https://alphacoders.com/")
+            direct = _extract_alphacoders_category_images(category_html, category_url, limit=18)
+            if direct:
+                _log_info(f"AlphaCoders category direct query={raw_query} results={len(direct)}")
+                return direct
+            detail_urls = _extract_alphacoders_detail_urls(category_html, category_url, limit=10)
+        except Exception as error:
+            _log_warning(f"AlphaCoders category lookup failed url={category_url}: {error}")
+
+    # If the slug route is missing or its markup did not expose cards, one web
+    # search may discover detail ids. There is deliberately no Google Images pass.
+    if not detail_urls:
+        try:
+            q = f"{raw_query} video game wallpaper site:wall.alphacoders.com/big.php"
+            search_html = _html_request(_google_search_url_for_query(q), timeout=5, referer="https://www.google.com/")
+            detail_urls = _extract_alphacoders_detail_urls(search_html, "https://wall.alphacoders.com/", limit=8)
+        except Exception as error:
+            _log_warning(f"AlphaCoders fallback lookup failed query={raw_query}: {error}")
+
+    if not detail_urls:
+        return []
+
+    # Fallback detail requests are capped at eight and run in a single concurrent
+    # batch. One detail page can produce exactly one wallpaper.
+    page_results: List[Tuple[int, str, str]] = []
+    urls = detail_urls[:8]
+    with ThreadPoolExecutor(max_workers=len(urls)) as executor:
+        future_map = {
+            executor.submit(_html_request, page_url, 5, "https://wall.alphacoders.com/"): (idx, page_url)
+            for idx, page_url in enumerate(urls)
+        }
+        for future in as_completed(future_map):
+            idx, page_url = future_map[future]
             try:
-                category_html = _html_request(category_url, timeout=12, referer="https://alphacoders.com/")
+                page_results.append((idx, page_url, future.result()))
             except Exception as error:
-                last_error = str(error)
-                continue
-            for url in _extract_alphacoders_detail_urls(category_html, category_url):
-                key = url.lower()
-                if key not in seen_pages:
-                    seen_pages.add(key)
-                    detail_urls.append(url)
-                if len(detail_urls) >= 24:
-                    break
-            if detail_urls:
-                break
+                _log_warning(f"AlphaCoders page lookup failed url={page_url}: {error}")
 
-    # Fall back to Google for AlphaCoders result/category/detail pages. AlphaCoders'
-    # own search UI is less stable for scraping than the public wallpaper/category pages.
-    google_queries = [
-        f"{query} site:wall.alphacoders.com/big.php",
-        f"{query} site:alphacoders.com",
-    ]
-    for google_query in google_queries:
-        try:
-            html = _html_request(_google_search_url_for_query(google_query), timeout=12, referer="https://www.google.com/")
-            for url in _extract_alphacoders_detail_urls(html, "https://wall.alphacoders.com/"):
-                key = url.lower()
-                if key not in seen_pages:
-                    seen_pages.add(key)
-                    detail_urls.append(url)
-            if len(detail_urls) < 16:
-                for category_url in _extract_alphacoders_category_urls(html, "https://alphacoders.com/"):
-                    try:
-                        category_html = _html_request(category_url, timeout=12, referer="https://alphacoders.com/")
-                    except Exception as error:
-                        last_error = str(error)
-                        _log_warning(f"AlphaCoders category lookup failed url={category_url}: {error}")
-                        continue
-                    for url in _extract_alphacoders_detail_urls(category_html, category_url):
-                        key = url.lower()
-                        if key not in seen_pages:
-                            seen_pages.add(key)
-                            detail_urls.append(url)
-                        if len(detail_urls) >= 24:
-                            break
-                    if len(detail_urls) >= 24:
-                        break
-            if detail_urls:
-                break
-        except Exception as error:
-            last_error = str(error)
-            _log_warning(f"AlphaCoders Google lookup failed query={google_query}: {error}")
-
+    page_results.sort(key=lambda item: item[0])
     results: List[Dict[str, Any]] = []
-    seen_images = set()
-    for page_url in detail_urls[:24]:
-        try:
-            page_html = _html_request(page_url, timeout=12, referer="https://wall.alphacoders.com/")
-        except Exception as error:
-            last_error = str(error)
-            _log_warning(f"AlphaCoders page lookup failed url={page_url}: {error}")
+    seen_ids = set()
+    for _idx, page_url, page_html in page_results:
+        image_id = (parse_qs(urlparse(page_url).query).get("i") or [""])[0]
+        if not image_id or image_id in seen_ids:
             continue
-        for image_url, dimensions, label, preview_url in _extract_alphacoders_image_urls(page_html, page_url):
-            key = image_url.split("?", 1)[0].lower()
-            if key in seen_images:
+        extracted = _extract_alphacoders_image_urls(page_html, page_url, limit=1)
+        if not extracted:
+            continue
+        image_url, dims, label, preview_url = extracted[0]
+        result = _result_for_background_image("alphacoders", image_url, dims, label)
+        if not result:
+            continue
+        seen_ids.add(image_id)
+        result["id"] = f"alphacoders-{image_id}"
+        result["page_url"] = page_url
+        if preview_url:
+            result["thumbnail_url"] = preview_url
+            result["preview_url"] = image_url
+        results.append(result)
+    return results
+
+def _store_market_locale() -> str:
+    """Return a Microsoft/Nintendo-friendly market such as ``it-it``."""
+    try:
+        store_locale, _country, _language = _ps_store_locale_parts()
+        if re.fullmatch(r"[a-z]{2}-[a-z]{2}", store_locale or ""):
+            return store_locale.lower()
+    except Exception:
+        pass
+    return "en-us"
+
+
+def _background_result_from_known_store_asset(
+    service: str,
+    image_url: str,
+    source: str,
+    dimensions: Optional[Tuple[int, int]] = None,
+    thumbnail_url: str = "",
+    page_url: str = "",
+) -> Optional[Dict[str, Any]]:
+    image_url = html_lib.unescape(str(image_url or "")).replace("\\/", "/").strip()
+    if image_url.startswith("//"):
+        image_url = f"https:{image_url}"
+    parsed = urlparse(image_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    if dimensions and not _looks_like_background_dimensions(dimensions):
+        return None
+    result: Dict[str, Any] = {
+        "id": f"{service}-candidate",
+        "image_url": image_url,
+        "thumbnail_url": thumbnail_url or image_url,
+        "preview_url": image_url,
+        "source": source,
+        "resolution": _dimension_label(dimensions, "landscape"),
+    }
+    if dimensions:
+        result["width"], result["height"] = dimensions
+    if page_url:
+        result["page_url"] = page_url
+    return result
+
+
+def _search_nintendo_backgrounds_sync(title: str, search_query: str = "") -> List[Dict[str, Any]]:
+    """Search Nintendo's own catalog and return landscape artwork only.
+
+    This follows the same fields used by the Nintendo Metadata Playnite extension:
+    Europe uses ``image_url_h2x1_s`` as LandscapeImage, while the US catalog uses
+    ``productImage`` and renders it through Nintendo's 16:9 Cloudinary endpoint.
+    Covers/square images are intentionally ignored.
+    """
+    raw_query = str(search_query or "").strip() or str(title or "").strip()
+    if not raw_query:
+        return []
+    market = _store_market_locale()
+    country = market.split("-", 1)[-1].upper() if "-" in market else "US"
+    results: List[Dict[str, Any]] = []
+    seen = set()
+
+    def add(url: str, dimensions: Optional[Tuple[int, int]], page_url: str = "") -> None:
+        result = _background_result_from_known_store_asset(
+            "nintendo", url, "Nintendo background", dimensions, page_url=page_url
+        )
+        if not result:
+            return
+        key = result["image_url"].split("?", 1)[0].lower()
+        if key in seen:
+            return
+        seen.add(key)
+        result["id"] = f"nintendo-{len(results) + 1}"
+        results.append(result)
+
+    # The current Playnite extension uses Algolia for the North-American store.
+    if country in {"US", "CA", "MX"}:
+        app_id = "U3B6GR4UA3"
+        api_key = "a29c6927638bfd8cee23993e51e721c9"
+        request_body = {
+            "requests": [{
+                "indexName": "store_game_en_us",
+                "query": raw_query,
+                "facetFilters": ["corePlatforms:Nintendo Switch", "hasDlc:false"],
+                "hitsPerPage": 12,
+            }]
+        }
+        request = Request(
+            f"https://{app_id}-2.algolia.net/1/indexes/*/queries",
+            data=json.dumps(request_body).encode("utf-8"),
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "X-Algolia-API-Key": api_key,
+                "X-Algolia-Application-Id": app_id,
+            },
+            method="POST",
+        )
+        with urlopen(request, timeout=18) as response:
+            payload = json.loads(response.read(2_000_000).decode("utf-8", "ignore"))
+        for hit in ((payload.get("results") or [{}])[0].get("hits") or []):
+            if not isinstance(hit, dict):
                 continue
-            seen_images.add(key)
-            result = _result_for_background_image("alphacoders", image_url, dimensions, label)
+            product_image = str(hit.get("productImage") or "").strip()
+            if not product_image:
+                continue
+            # Same landscape transformation used by NintendoMetadata.ParseUsGame.
+            landscape = (
+                "https://assets.nintendo.com/image/upload/"
+                "ar_16:9,b_auto:border,c_lpad/b_white/f_auto/q_auto/dpr_1/"
+                f"c_scale,w_1920/{product_image.lstrip('/')}"
+            )
+            page_url = _absolute_url(str(hit.get("url") or ""), "https://www.nintendo.com/")
+            add(landscape, (1920, 1080), page_url)
+            if len(results) >= 24:
+                break
+        return results
+
+    # Europe is the best default for Italy and most non-NA installations. The
+    # Playnite extension queries this Solr endpoint and maps image_url_h2x1_s to
+    # LandscapeImage. Only that wide field is imported here.
+    params = {
+        "q": raw_query,
+        "fq": 'type:GAME AND playable_on_txt:"HAC"',
+        "sort": "score desc, date_from desc",
+        "start": 0,
+        "rows": 24,
+        "wt": "json",
+    }
+    url = f"https://search.nintendo-europe.com/en/select?{urlencode(params)}"
+    request = Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json,*/*"})
+    with urlopen(request, timeout=18) as response:
+        payload = json.loads(response.read(2_000_000).decode("utf-8", "ignore"))
+    docs = ((payload.get("response") or {}).get("docs") or []) if isinstance(payload, dict) else []
+    for game in docs:
+        if not isinstance(game, dict):
+            continue
+        image_url = str(game.get("image_url_h2x1_s") or "").strip()
+        if not image_url:
+            continue
+        # The extension requests the larger landscape variant by replacing 500w.
+        large_url = image_url.replace("500w", "1600w")
+        page_url = _absolute_url(str(game.get("url") or ""), "https://www.nintendo.com/")
+        add(large_url, (1600, 800), page_url)
+        if len(results) >= 24:
+            break
+    return results
+
+
+def _xbox_find_product_summary(value: Any, product_id: str, depth: int = 0) -> Optional[Dict[str, Any]]:
+    if depth > 10:
+        return None
+    target = str(product_id or "").lower()
+    if isinstance(value, dict):
+        own_id = str(value.get("ProductId") or value.get("productId") or value.get("id") or "").lower()
+        if target and own_id == target and isinstance(value.get("Images") or value.get("images"), dict):
+            return value
+        for key, item in value.items():
+            if target and str(key).lower() == target and isinstance(item, dict):
+                return item
+            found = _xbox_find_product_summary(item, product_id, depth + 1)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for item in value:
+            found = _xbox_find_product_summary(item, product_id, depth + 1)
+            if found:
+                return found
+    return None
+
+
+def _xbox_image_details(value: Any) -> Tuple[str, Optional[Tuple[int, int]]]:
+    if not isinstance(value, dict):
+        return "", None
+    url = str(value.get("Url") or value.get("url") or value.get("Uri") or value.get("uri") or "").strip()
+    try:
+        width = int(value.get("Width") or value.get("width") or 0)
+        height = int(value.get("Height") or value.get("height") or 0)
+    except Exception:
+        width = height = 0
+    return url, ((width, height) if width > 0 and height > 0 else None)
+
+
+def _xbox_store_image_dimensions(image_url: str, context: str = "") -> Optional[Tuple[int, int]]:
+    """Read the width/height that Microsoft's image CDN places in the query string."""
+    try:
+        query = parse_qs(urlparse(str(image_url or "")).query)
+        width = int((query.get("w") or query.get("width") or [0])[0] or 0)
+        height = int((query.get("h") or query.get("height") or [0])[0] or 0)
+        if width > 0 and height > 0:
+            return width, height
+    except Exception:
+        pass
+    text = html_lib.unescape(str(context or ""))
+    for width_pattern, height_pattern in (
+        (r"[\"']?width[\"']?\s*[:=]\s*[\"']?(\d{3,5})", r"[\"']?height[\"']?\s*[:=]\s*[\"']?(\d{3,5})"),
+        (r"\bw\s*[:=]\s*[\"']?(\d{3,5})", r"\bh\s*[:=]\s*[\"']?(\d{3,5})"),
+    ):
+        width_match = re.search(width_pattern, text, re.IGNORECASE)
+        height_match = re.search(height_pattern, text, re.IGNORECASE)
+        if width_match and height_match:
+            try:
+                width, height = int(width_match.group(1)), int(height_match.group(1))
+                if width > 0 and height > 0:
+                    return width, height
+            except Exception:
+                pass
+    return _dimension_from_text(context) or _dimension_from_text(image_url)
+
+
+def _xbox_store_image_is_landscape(dimensions: Optional[Tuple[int, int]]) -> bool:
+    if not dimensions:
+        return False
+    width, height = dimensions
+    if width <= 0 or height <= 0:
+        return False
+    ratio = width / max(1, height)
+    return 1.20 <= ratio <= 2.60
+
+
+def _xbox_expand_store_image(image_url: str, dimensions: Optional[Tuple[int, int]] = None) -> Tuple[str, Optional[Tuple[int, int]]]:
+    """Request a useful 16:9 size from Microsoft's official Store image CDN."""
+    raw = html_lib.unescape(str(image_url or "")).replace("\\/", "/").strip()
+    if raw.startswith("//"):
+        raw = f"https:{raw}"
+    parsed = urlparse(raw)
+    host = parsed.netloc.lower()
+    if host not in {"store-images.s-microsoft.com", "store-images.microsoft.com"}:
+        return raw, dimensions
+    if not _xbox_store_image_is_landscape(dimensions):
+        return raw, dimensions
+    # The Store page often exposes a 480x270 thumbnail of the actual landscape
+    # artwork. The same CDN endpoint accepts w/h/q, so request a proper 1080p
+    # version without changing the underlying asset.
+    base = f"{parsed.scheme or 'https'}://{parsed.netloc}{parsed.path}"
+    return f"{base}?w=1920&h=1080&q=100", (1920, 1080)
+
+
+def _extract_xbox_store_cdn_backgrounds(html: str, page_url: str = "", limit: int = 24) -> List[Dict[str, Any]]:
+    """Extract only landscape assets from Microsoft's official Store image CDN.
+
+    Current xbox.com product pages expose their hero/background artwork as
+    store-images.s-microsoft.com URLs even when __PRELOADED_STATE__ is absent.
+    Portrait cover art is rejected by its w/h ratio before anything is returned.
+    """
+    results: List[Dict[str, Any]] = []
+    seen = set()
+    decoded = html_lib.unescape(str(html or "")).replace("\\u0026", "&").replace("\\/", "/")
+    patterns = (
+        r'https?://store-images\.s-microsoft\.com/image/[^"\'<>\s]+',
+        r'https?://store-images\.microsoft\.com/image/[^"\'<>\s]+',
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, decoded, re.IGNORECASE):
+            raw_url = match.group(0).rstrip("\\,;)")
+            dimensions = _xbox_store_image_dimensions(raw_url, decoded[max(0, match.start() - 180):match.end() + 180])
+            if not _xbox_store_image_is_landscape(dimensions):
+                continue
+            image_url, output_dimensions = _xbox_expand_store_image(raw_url, dimensions)
+            key = image_url.split("?", 1)[0].lower()
+            if key in seen:
+                continue
+            result = _background_result_from_known_store_asset(
+                "xbox", image_url, "Xbox Store background", output_dimensions, page_url=page_url
+            )
             if not result:
                 continue
-            result["id"] = f"alphacoders-{len(results) + 1}"
-            result["page_url"] = page_url
-            if preview_url:
-                result["thumbnail_url"] = preview_url
-                result["preview_url"] = image_url
+            seen.add(key)
+            result["id"] = f"xbox-{len(results) + 1}"
             results.append(result)
-            if len(results) >= 32:
-                break
-        if len(results) >= 32:
-            break
-    if not results and last_error:
-        _log_warning(f"AlphaCoders search returned no images query={query}: {last_error}")
+            if len(results) >= limit:
+                return results
     return results
+
+
+def _search_xbox_official_cdn_sync(title: str, search_query: str = "") -> Dict[str, Any]:
+    """Fast Xbox fallback: one Google Images request, but accept official CDN only."""
+    raw_query = str(search_query or "").strip() or str(title or "").strip()
+    query = f'{raw_query} Xbox game screenshot background site:store-images.s-microsoft.com'.strip()
+    google_url = _google_search_url_for_query(query)
+    request = Request(
+        google_url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Cookie": "CONSENT=YES+cb.20210328-17-p0.en+FX+410; SOCS=CAESHAgBEhIaAB",
+        },
+    )
+    with urlopen(request, timeout=9) as response:
+        html = response.read(1_600_000).decode("utf-8", "ignore")
+    return {"query": query, "google_url": google_url, "results": _extract_xbox_store_cdn_backgrounds(html, limit=24)}
+
+
+def _extract_xbox_backgrounds_from_html(html: str, product_id: str, page_url: str) -> List[Dict[str, Any]]:
+    results: List[Dict[str, Any]] = []
+    seen = set()
+
+    def add(url: str, dimensions: Optional[Tuple[int, int]], label: str) -> None:
+        url = _absolute_url(str(url or ""), page_url or "https://www.xbox.com/")
+        result = _background_result_from_known_store_asset("xbox", url, label, dimensions, page_url=page_url)
+        if not result:
+            return
+        key = result["image_url"].split("?", 1)[0].lower()
+        if key in seen:
+            return
+        seen.add(key)
+        result["id"] = f"xbox-{len(results) + 1}"
+        results.append(result)
+
+    # xbox.com exposes the same preloaded product summary parsed by XboxMetadata.
+    match = re.search(r"window\.__PRELOADED_STATE__\s*=\s*(\{.*?\});\s*(?:\r?\n|</script>)", html, re.IGNORECASE | re.DOTALL)
+    if match:
+        try:
+            payload = json.loads(match.group(1))
+            summary = _xbox_find_product_summary(payload, product_id)
+            images = (summary or {}).get("Images") or (summary or {}).get("images") or {}
+            if isinstance(images, dict):
+                hero = images.get("SuperHeroArt") or images.get("superHeroArt") or images.get("superheroArt")
+                hero_url, hero_dims = _xbox_image_details(hero)
+                if hero_url:
+                    add(hero_url, hero_dims, "Xbox SuperHeroArt")
+                screenshots = images.get("Screenshots") or images.get("screenshots") or []
+                if isinstance(screenshots, list):
+                    for item in screenshots:
+                        url, dims = _xbox_image_details(item)
+                        if url:
+                            add(url, dims, "Xbox screenshot")
+        except Exception as error:
+            _log_warning(f"Xbox preloaded-state parse failed product_id={product_id}: {error}")
+
+    # microsoft.com fallback used by the Playnite extension: gallery JSON contains
+    # screenshots/backgrounds. Covers/posters are deliberately never inspected.
+    if not results:
+        gallery_match = re.search(r"data-slides-json\s*=\s*([\"'])(.*?)\1", html, re.IGNORECASE | re.DOTALL)
+        if gallery_match:
+            try:
+                gallery = json.loads(html_lib.unescape(gallery_match.group(2)))
+                if isinstance(gallery, list):
+                    for item in gallery:
+                        if not isinstance(item, dict):
+                            continue
+                        url = _absolute_url(
+                            str(item.get("DefaultGalleryImageUrl") or item.get("defaultGalleryImageUrl") or "").strip(),
+                            "https://www.microsoft.com/",
+                        )
+                        dims = _dimension_from_text(url)
+                        breakpoints = item.get("ImageForBreakPoints") or item.get("imageForBreakPoints") or []
+                        thumb = ""
+                        if isinstance(breakpoints, list) and breakpoints:
+                            candidates = [bp for bp in breakpoints if isinstance(bp, dict)]
+                            if candidates:
+                                candidates.sort(key=lambda bp: int(bp.get("ForMinWidth") or bp.get("forMinWidth") or 0))
+                                thumb = _absolute_url(
+                                    str(candidates[0].get("Uri") or candidates[0].get("uri") or "").strip(),
+                                    "https://www.microsoft.com/",
+                                )
+                        result = _background_result_from_known_store_asset(
+                            "xbox", url, "Xbox screenshot", dims, thumbnail_url=thumb, page_url=page_url
+                        )
+                        if result:
+                            key = result["image_url"].split("?", 1)[0].lower()
+                            if key not in seen:
+                                seen.add(key)
+                                result["id"] = f"xbox-{len(results) + 1}"
+                                results.append(result)
+            except Exception as error:
+                _log_warning(f"Xbox Microsoft gallery parse failed product_id={product_id}: {error}")
+
+    # xbox.com changed its embedded state more than once. The rendered page still
+    # exposes official store-images landscape assets, so use those as a resilient
+    # fallback while continuing to reject portrait cover art by aspect ratio.
+    if not results:
+        for item in _extract_xbox_store_cdn_backgrounds(html, page_url=page_url, limit=24):
+            key = str(item.get("image_url") or "").split("?", 1)[0].lower()
+            if key and key not in seen:
+                seen.add(key)
+                item["id"] = f"xbox-{len(results) + 1}"
+                results.append(item)
+    return results
+
+
+def _xbox_product_id_from_url(product_url: str) -> str:
+    path_parts = [part for part in urlparse(str(product_url or "")).path.split("/") if part]
+    try:
+        store_index = next(i for i, part in enumerate(path_parts) if part.lower() == "store")
+    except StopIteration:
+        return ""
+    # /games/store/<slug>/<product id>/... -- select the first plausible id
+    # after the human-readable slug instead of variant ids that may follow it.
+    for part in path_parts[store_index + 2:]:
+        if re.fullmatch(r"[A-Za-z0-9]{10,16}", part):
+            return part.upper()
+    return ""
+
+
+def _xbox_search_page_products(html: str, base_url: str) -> List[Tuple[str, str, str]]:
+    """Extract Xbox Store products from the public Xbox Search/Results page."""
+    decoded = html_lib.unescape(str(html or "")).replace("\\u0026", "&").replace("\\/", "/")
+    candidates: List[Tuple[str, str]] = []
+    anchor_pattern = re.compile(r"<a\b([^>]*?)href=[\"']([^\"']+/games/store/[^\"']+)[\"']([^>]*)>(.*?)</a>", re.IGNORECASE | re.DOTALL)
+    for match in anchor_pattern.finditer(decoded):
+        attrs = f"{match.group(1)} {match.group(3)}"
+        body = re.sub(r"<[^>]+>", " ", match.group(4))
+        label_match = re.search(r"(?:aria-label|title)=[\"']([^\"']+)", attrs, re.IGNORECASE)
+        title = html_lib.unescape(label_match.group(1) if label_match else body)
+        title = re.sub(r"\s+", " ", title).strip()
+        candidates.append((match.group(2), title))
+
+    # Search pages sometimes serialize cards as JSON rather than complete anchors.
+    for match in re.finditer(r"https?://(?:www\.)?xbox\.com/[^\"'<>\s]+/games/store/[^\"'<>\s]+", decoded, re.IGNORECASE):
+        candidates.append((match.group(0).replace('< >','<>'), ""))
+    for match in re.finditer(r"[\"'](/[^\"']*/games/store/[^\"']+)[\"']", decoded, re.IGNORECASE):
+        candidates.append((match.group(1), ""))
+
+    products: List[Tuple[str, str, str]] = []
+    seen = set()
+    for raw_url, title in candidates:
+        product_url = _absolute_url(raw_url, base_url).split("#", 1)[0]
+        product_id = _xbox_product_id_from_url(product_url)
+        if not product_id or product_id.lower() in seen:
+            continue
+        seen.add(product_id.lower())
+        if not title:
+            parts = [part for part in urlparse(product_url).path.split("/") if part]
+            try:
+                store_index = next(i for i, part in enumerate(parts) if part.lower() == "store")
+                slug = parts[store_index + 1] if store_index + 1 < len(parts) else ""
+                title = re.sub(r"[-_]+", " ", slug).strip()
+            except Exception:
+                title = ""
+        products.append((product_id, product_url, title))
+        if len(products) >= 12:
+            break
+    return products
+
+
+def _search_xbox_site_products_sync(query: str) -> List[Tuple[str, str, str]]:
+    # Xbox still exposes its public search results under /Search/Results. Using
+    # this page avoids the slow Google Images lookup and usually gives us the
+    # canonical Store product link in a single request.
+    search_url = f"https://www.xbox.com/en-US/Search/Results?{urlencode({'q': query})}"
+    html = _html_request(search_url, timeout=5, referer="https://www.xbox.com/")
+    products = _xbox_search_page_products(html, search_url)
+    products.sort(key=lambda product: _xbox_product_sort_key(query, product))
+    _log_info(f"Xbox site search query={query} products={len(products)}")
+    return products
+
+
+def _xbox_autosuggest_url(market: str, query: str) -> str:
+    """Mirror XboxMetadata.GetSearchUrl instead of form-urlencoding the filter."""
+    # XboxMetadata deliberately leaves `filter=+ClientType:StoreWeb` in the raw
+    # query string. Encoding the '+' as %2B changes what the Microsoft endpoint
+    # receives and can produce an empty product result set.
+    escaped_query = quote(query, safe="")
+    safe_market = re.sub(r"[^A-Za-z0-9-]", "", str(market or "en-us")) or "en-us"
+    return (
+        f"https://www.microsoft.com/msstoreapiprod/api/autosuggest?market={safe_market}"
+        f"&sources=DCatAll-Products,xSearch-Products"
+        f"&filter=+ClientType:StoreWeb&counts=20,20&query={escaped_query}"
+    )
+
+
+def _xbox_autosuggest_products(payload: Any) -> List[Tuple[str, str, str]]:
+    products: List[Tuple[str, str, str]] = []
+    seen_products = set()
+    if not isinstance(payload, dict):
+        return products
+    result_sets = payload.get("ResultSets") or payload.get("resultSets") or []
+    if not isinstance(result_sets, list):
+        return products
+    for result_set in result_sets:
+        if not isinstance(result_set, dict) or str(result_set.get("Type") or result_set.get("type") or "").lower() != "product":
+            continue
+        suggests = result_set.get("Suggests") or result_set.get("suggests") or []
+        if not isinstance(suggests, list):
+            continue
+        for suggest in suggests:
+            if not isinstance(suggest, dict):
+                continue
+            # This is the same filter used by XboxMetadata; tolerate casing only.
+            if str(suggest.get("Source") or suggest.get("source") or "").lower() != "game":
+                continue
+            metas = suggest.get("Metas") or suggest.get("metas") or []
+            meta_map: Dict[str, str] = {}
+            if isinstance(metas, list):
+                for meta in metas:
+                    if isinstance(meta, dict):
+                        key = str(meta.get("Key") or meta.get("key") or "").strip().lower()
+                        if key:
+                            meta_map[key] = str(meta.get("Value") or meta.get("value") or "")
+            product_id = meta_map.get("bigcatalogid", "").strip()
+            product_url = _absolute_url(
+                str(suggest.get("Url") or suggest.get("url") or ""),
+                "https://www.xbox.com/",
+            )
+            product_title = str(suggest.get("Title") or suggest.get("title") or "").strip()
+            if not product_id or not product_url or product_id.lower() in seen_products:
+                continue
+            seen_products.add(product_id.lower())
+            products.append((product_id, product_url, product_title))
+            if len(products) >= 8:
+                return products
+    return products
+
+
+def _xbox_product_sort_key(query: str, product: Tuple[str, str, str]) -> Tuple[int, int, str]:
+    title = str(product[2] or "")
+    normalized_query = _ps_normalize_title(query)
+    normalized_title = _ps_normalize_title(title)
+    if normalized_query and normalized_title == normalized_query:
+        rank = 0
+    elif normalized_query and normalized_title.startswith(normalized_query + " "):
+        rank = 1
+    elif normalized_query and normalized_query in normalized_title:
+        rank = 2
+    else:
+        query_tokens = set(normalized_query.split())
+        title_tokens = set(normalized_title.split())
+        overlap = len(query_tokens & title_tokens)
+        rank = 20 - min(10, overlap)
+    if _ps_is_addon(title):
+        rank += 20
+    return rank, abs(len(normalized_title) - len(normalized_query)), normalized_title
+
+
+def _fetch_xbox_product_backgrounds(product: Tuple[str, str, str]) -> List[Dict[str, Any]]:
+    product_id, product_url, _product_title = product
+    request = Request(
+        product_url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.xbox.com/",
+        },
+    )
+    with urlopen(request, timeout=6) as response:
+        html = response.read(3_000_000).decode("utf-8", "ignore")
+        final_url = str(response.geturl() or product_url)
+    extracted = _extract_xbox_backgrounds_from_html(html, product_id, final_url)
+    _log_info(
+        f"Xbox Store product backgrounds product_id={product_id} url={final_url} results={len(extracted)}"
+    )
+    return extracted
+
+
+def _xbox_storeedge_products(payload: Any) -> List[Tuple[str, str, str]]:
+    """Find ProductId/title pairs in the StoreEdge v9 search response."""
+    found: List[Tuple[str, str, str]] = []
+    seen = set()
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            product_id = str(value.get("ProductId") or value.get("productId") or "").strip()
+            title = str(value.get("Title") or value.get("title") or "").strip()
+            if product_id and title and re.fullmatch(r"[A-Za-z0-9]{10,16}", product_id):
+                key = product_id.lower()
+                if key not in seen:
+                    seen.add(key)
+                    found.append((product_id.upper(), "", title))
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+
+    walk(payload)
+    return found
+
+
+def _search_xbox_storeedge_sync(query: str) -> List[Tuple[str, str, str]]:
+    params = {
+        "appVersion": "22203.1401.0.0",
+        "market": "US",
+        "locale": "en-US",
+        "deviceFamily": "windows.xbox",
+        "query": query,
+        "mediaType": "games",
+    }
+    url = f"https://storeedgefd.dsx.mp.microsoft.com/v9.0/pages/searchResults?{urlencode(params)}"
+    request = Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Accept": "application/json,text/json,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    })
+    with urlopen(request, timeout=4) as response:
+        payload = json.loads(response.read(2_500_000).decode("utf-8", "ignore"))
+    products = _xbox_storeedge_products(payload)
+    products.sort(key=lambda product: _xbox_product_sort_key(query, product))
+    _log_info(f"Xbox StoreEdge search query={query} products={len(products)}")
+    return products[:8]
+
+
+def _search_xbox_autosuggest_sync(query: str) -> List[Tuple[str, str, str]]:
+    request = Request(_xbox_autosuggest_url("en-us", query), headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Accept": "application/json,text/json,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.xbox.com/en-US/",
+    })
+    with urlopen(request, timeout=4) as response:
+        payload = json.loads(response.read(1_500_000).decode("utf-8", "ignore"))
+    products = _xbox_autosuggest_products(payload)
+    products.sort(key=lambda product: _xbox_product_sort_key(query, product))
+    _log_info(f"Xbox autosuggest query={query} products={len(products)}")
+    return products[:8]
+
+
+def _xbox_catalog_backgrounds(payload: Any, ordered_products: List[Tuple[str, str, str]], limit: int = 24) -> List[Dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    product_order = {product[0].lower(): idx for idx, product in enumerate(ordered_products)}
+    entries = payload.get("Products") or payload.get("products") or []
+    if not isinstance(entries, list):
+        return []
+    entries.sort(key=lambda entry: product_order.get(str((entry or {}).get("ProductId") or (entry or {}).get("productId") or "").lower(), 999))
+    results: List[Dict[str, Any]] = []
+    seen = set()
+    allowed_purposes = {"superheroart", "hero", "imagegallery", "screenshot"}
+    for product in entries:
+        if not isinstance(product, dict):
+            continue
+        product_id = str(product.get("ProductId") or product.get("productId") or "").strip()
+        localized = product.get("LocalizedProperties") or product.get("localizedProperties") or []
+        if not isinstance(localized, list):
+            continue
+        for loc in localized[:1]:
+            if not isinstance(loc, dict):
+                continue
+            images = loc.get("Images") or loc.get("images") or []
+            if not isinstance(images, list):
+                continue
+            # Hero first, then screenshots/gallery, preserving Store order within type.
+            def image_rank(img: Any) -> int:
+                purpose = str((img or {}).get("ImagePurpose") or (img or {}).get("imagePurpose") or "").lower()
+                return 0 if purpose in {"superheroart", "hero"} else 1
+            for image in sorted((img for img in images if isinstance(img, dict)), key=image_rank):
+                purpose = str(image.get("ImagePurpose") or image.get("imagePurpose") or "").strip().lower()
+                if purpose not in allowed_purposes:
+                    continue
+                uri = str(image.get("Uri") or image.get("uri") or image.get("Url") or image.get("url") or "").strip()
+                try:
+                    width = int(image.get("Width") or image.get("width") or 0)
+                    height = int(image.get("Height") or image.get("height") or 0)
+                except Exception:
+                    width = height = 0
+                dims = (width, height) if width > 0 and height > 0 else None
+                if not uri or not _xbox_store_image_is_landscape(dims):
+                    continue
+                if uri.startswith("//"):
+                    uri = "https:" + uri
+                elif uri.startswith("http://"):
+                    uri = "https://" + uri[len("http://"):]
+                image_url, out_dims = _xbox_expand_store_image(uri, dims)
+                key = image_url.split("?", 1)[0].lower()
+                if key in seen:
+                    continue
+                result = _background_result_from_known_store_asset(
+                    "xbox", image_url,
+                    "Xbox SuperHeroArt" if purpose in {"superheroart", "hero"} else "Xbox screenshot",
+                    out_dims,
+                )
+                if not result:
+                    continue
+                seen.add(key)
+                result["id"] = f"xbox-{len(results) + 1}"
+                result["product_id"] = product_id
+                results.append(result)
+                if len(results) >= limit:
+                    return results
+    return results
+
+
+def _fetch_xbox_catalog_backgrounds(products: List[Tuple[str, str, str]]) -> List[Dict[str, Any]]:
+    ids = [product[0] for product in products[:3] if product[0]]
+    if not ids:
+        return []
+    params = {
+        "bigIds": ",".join(ids),
+        "market": "US",
+        "languages": "en-us",
+        "fieldsTemplate": "Details",
+    }
+    url = f"https://displaycatalog.mp.microsoft.com/v7.0/products?{urlencode(params)}"
+    request = Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Accept": "application/json,text/json,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    })
+    with urlopen(request, timeout=4) as response:
+        payload = json.loads(response.read(4_000_000).decode("utf-8", "ignore"))
+    return _xbox_catalog_backgrounds(payload, products, limit=24)
+
+
+def _search_xbox_backgrounds_sync(title: str, search_query: str = "") -> List[Dict[str, Any]]:
+    """Xbox backgrounds via two bounded JSON discovery calls + one catalog call."""
+    raw_query = str(search_query or "").strip() or str(title or "").strip()
+    if not raw_query:
+        return []
+    safe_query = re.sub(r"\s+", " ", "".join(
+        ch for ch in raw_query
+        if ch.isalnum() or ch.isspace() or unicodedata.category(ch).startswith("M")
+    )).strip()
+    if not safe_query:
+        return []
+
+    # StoreEdge v9 and the Playnite autosuggest endpoint are independent. Run
+    # them together so an unavailable endpoint adds no serial delay.
+    discovered: List[Tuple[str, str, str]] = []
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future_map = {
+            executor.submit(_search_xbox_storeedge_sync, safe_query): "StoreEdge",
+            executor.submit(_search_xbox_autosuggest_sync, safe_query): "autosuggest",
+        }
+        for future in as_completed(future_map):
+            source = future_map[future]
+            try:
+                discovered.extend(future.result())
+            except Exception as error:
+                _log_warning(f"Xbox {source} search failed query={safe_query}: {error}")
+
+    if not discovered:
+        return []
+    # Deduplicate the same StoreId returned by both endpoints and rank once.
+    by_id: Dict[str, Tuple[str, str, str]] = {}
+    for product in discovered:
+        product_id = str(product[0] or "").lower()
+        if product_id and product_id not in by_id:
+            by_id[product_id] = product
+    products = list(by_id.values())
+    products.sort(key=lambda product: _xbox_product_sort_key(safe_query, product))
+
+    # Exact match: one product is enough. For fuzzy names keep at most three.
+    first_rank = _xbox_product_sort_key(safe_query, products[0])[0]
+    selected = products[:1] if first_rank == 0 else products[:3]
+    try:
+        results = _fetch_xbox_catalog_backgrounds(selected)
+        _log_info(f"Xbox background search query={safe_query} products={len(selected)} results={len(results)}")
+        return results
+    except Exception as error:
+        _log_warning(f"Xbox display catalog lookup failed query={safe_query}: {error}")
+        return []
+
 
 def _search_background_service_images_sync(title: str, service: str, search_query: str = "") -> Dict[str, Any]:
     config = BACKGROUND_SERVICE_CONFIGS[service]
@@ -1618,24 +2866,34 @@ def _search_background_service_images_sync(title: str, service: str, search_quer
         direct_results = _search_igdb_playnite_images_sync(title, raw_query)
     elif service == "alphacoders":
         direct_results = _search_alphacoders_images_sync(title, raw_query)
+    elif service == "nintendo":
+        direct_results = _search_nintendo_backgrounds_sync(title, raw_query)
+    elif service == "xbox":
+        direct_results = _search_xbox_backgrounds_sync(title, raw_query)
+
     query = f"{raw_query} {config['query_suffix']}".strip()
-    google_url = _google_search_url_for_query(query)
+    google_url = ""
     google_results: List[Dict[str, Any]] = []
-    try:
-        request = Request(
-            google_url,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Cookie": "CONSENT=YES+cb.20210328-17-p0.en+FX+410; SOCS=CAESHAgBEhIaAB"
-            }
-        )
-        with urlopen(request, timeout=15) as response:
-            html = response.read(1_500_000).decode("utf-8", "ignore")
-        google_results = _extract_background_service_results(html, service=service)
-    except Exception as error:
-        _log_warning(f"{config['label']} Google image fallback failed query={query}: {error}")
+    # Nintendo/Xbox results come from their Store APIs/pages. Do not use a broad
+    # image-search fallback there because it can re-introduce covers/posters.
+    if service == "igdb":
+        google_url = _google_search_url_for_query(query)
+        try:
+            request = Request(
+                google_url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Cookie": "CONSENT=YES+cb.20210328-17-p0.en+FX+410; SOCS=CAESHAgBEhIaAB"
+                }
+            )
+            with urlopen(request, timeout=15) as response:
+                html = response.read(1_500_000).decode("utf-8", "ignore")
+            google_results = _extract_background_service_results(html, service=service)
+        except Exception as error:
+            _log_warning(f"{config['label']} Google image fallback failed query={query}: {error}")
+
     combined_results: List[Dict[str, Any]] = []
     seen = set()
     for result in [*direct_results, *google_results]:
@@ -2016,6 +3274,28 @@ def _window_area(hwnd: int) -> int:
     return max(0, rect.right - rect.left) * max(0, rect.bottom - rect.top)
 
 
+def _window_extended_style(hwnd: int) -> int:
+    hwnd = _int_or_zero(hwnd)
+    if not _is_windows() or hwnd <= 0:
+        return 0
+
+    user32 = ctypes.windll.user32
+    getter = getattr(user32, "GetWindowLongPtrW", None)
+    if getter is None:
+        getter = user32.GetWindowLongW
+        getter.restype = ctypes.c_long
+    else:
+        getter.restype = ctypes.c_ssize_t
+    getter.argtypes = [wintypes.HWND, ctypes.c_int]
+    return int(getter(hwnd, GWL_EXSTYLE) or 0)
+
+
+def _window_is_auxiliary_game_surface(hwnd: int) -> bool:
+    """Reject tool/no-activate shade windows that cannot own gameplay focus."""
+    ex_style = _window_extended_style(hwnd)
+    return bool(ex_style & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE))
+
+
 def _monitor_rect_for_window(hwnd: int) -> Optional[wintypes.RECT]:
     hwnd = _int_or_zero(hwnd)
     if not _is_windows() or hwnd <= 0:
@@ -2063,7 +3343,10 @@ def _window_is_fullscreen(hwnd: int) -> bool:
 
 
 def _pid_has_fullscreen_window(pid: int) -> bool:
-    return any(_window_is_fullscreen(hwnd) for hwnd in _windows_for_pid(pid))
+    return any(
+        not _window_is_auxiliary_game_surface(hwnd) and _window_is_fullscreen(hwnd)
+        for hwnd in _windows_for_pid(pid)
+    )
 
 
 def _pid_has_visible_window(pid: int) -> bool:
@@ -2094,7 +3377,10 @@ def _window_is_large_game_surface(hwnd: int) -> bool:
 
 
 def _pid_has_large_game_window(pid: int) -> bool:
-    return any(_window_is_large_game_surface(hwnd) for hwnd in _windows_for_pid(pid, limit=6))
+    return any(
+        not _window_is_auxiliary_game_surface(hwnd) and _window_is_large_game_surface(hwnd)
+        for hwnd in _windows_for_pid(pid, limit=6)
+    )
 
 
 def _window_is_near_fullscreen_game_surface(hwnd: int) -> bool:
@@ -2155,6 +3441,40 @@ def _post_close_to_process_windows(pid: int) -> bool:
     return posted
 
 
+def _window_has_input_focus(hwnd: int) -> bool:
+    hwnd = _int_or_zero(hwnd)
+    if not _is_windows() or hwnd <= 0:
+        return False
+
+    user32 = ctypes.windll.user32
+    user32.GetForegroundWindow.argtypes = []
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    user32.GetGUIThreadInfo.argtypes = [wintypes.DWORD, ctypes.POINTER(GUITHREADINFO)]
+    user32.GetGUIThreadInfo.restype = wintypes.BOOL
+    user32.IsChild.argtypes = [wintypes.HWND, wintypes.HWND]
+    user32.IsChild.restype = wintypes.BOOL
+
+    if int(user32.GetForegroundWindow() or 0) != hwnd:
+        return False
+
+    target_thread = int(user32.GetWindowThreadProcessId(hwnd, None) or 0)
+    if target_thread <= 0:
+        return True
+
+    info = GUITHREADINFO()
+    info.cbSize = ctypes.sizeof(GUITHREADINFO)
+    if not user32.GetGUIThreadInfo(target_thread, ctypes.byref(info)):
+        return True
+
+    active = int(info.hwndActive or 0)
+    focused = int(info.hwndFocus or 0)
+    active_belongs_to_target = active == hwnd or (active > 0 and bool(user32.IsChild(hwnd, active)))
+    focus_belongs_to_target = focused == 0 or focused == hwnd or bool(user32.IsChild(hwnd, focused))
+    return active_belongs_to_target and focus_belongs_to_target
+
+
 def _focus_window(hwnd: int) -> bool:
     hwnd = _int_or_zero(hwnd)
     if not _is_windows() or hwnd <= 0:
@@ -2200,7 +3520,8 @@ def _focus_window(hwnd: int) -> bool:
         user32.BringWindowToTop(hwnd)
         user32.SetActiveWindow(hwnd)
         user32.SetFocus(hwnd)
-        return bool(user32.SetForegroundWindow(hwnd))
+        user32.SetForegroundWindow(hwnd)
+        return _window_has_input_focus(hwnd)
     finally:
         if attached_target:
             user32.AttachThreadInput(current_thread, target_thread, False)
@@ -2749,6 +4070,7 @@ class Plugin:
         self.current_launch_background_opacity = 100
         self.current_launch_game_settle_seconds: Optional[float] = None
         self.modern_active = False
+        self.native_prompt_visible = False
         self.modern_started_at = 0.0
         self.current_launch_mode = None
         self.current_launch_timeout_enabled = None
@@ -2756,16 +4078,18 @@ class Plugin:
         self.launch_request_started_at = 0.0
         self.known_processes: Dict[int, Dict[str, Any]] = {}
         self.launch_chain_pids: Dict[int, float] = {}
-        self.launch_game_candidates: Dict[int, Dict[str, float]] = {}
+        self.launch_game_candidates: Dict[int, Dict[str, Any]] = {}
         self.launch_game_fullscreen_since: Dict[int, float] = {}
         self.active_game_pids: Dict[int, float] = {}
         self.pending_steam_refocus_until = 0.0
+        self.pending_steam_refocus_not_before = 0.0
         self.last_steam_refocus_attempt_at = 0.0
         self.modern_hidden_launcher_windows: Dict[int, Dict[str, Any]] = {}
         self.modern_steam_topmost_hwnd = 0
         self.modern_release_after = 0.0
         self.modern_handoff_hwnd = 0
         self.modern_handoff_pid = 0
+        self.launch_action_started_at = 0.0
         self.launch_action_completed_at = 0.0
         self.last_modern_cover_refocus_at = 0.0
         self.last_modern_cover_refocus_log_at = 0.0
@@ -3127,6 +4451,7 @@ class Plugin:
         self.launch_game_fullscreen_since = {}
         self.active_game_pids = {}
         self.pending_steam_refocus_until = 0.0
+        self.pending_steam_refocus_not_before = 0.0
         self.last_steam_refocus_attempt_at = 0.0
         self.launch_candidate_focus_attempted = set()
 
@@ -3169,6 +4494,7 @@ class Plugin:
             text = str(payload or "")
             phase = ""
         if phase == "start":
+            self.launch_action_started_at = time.time()
             self.launch_action_completed_at = 0.0
         elif phase == "complete" and self.launch_action_completed_at <= 0:
             self.launch_action_completed_at = time.time()
@@ -3675,7 +5001,7 @@ class Plugin:
         title = ""
         resolution = "3840x2160"
         search_query = ""
-        requested_services: List[str] = ["playstation", "igdb", "alphacoders"]
+        requested_services: List[str] = ["playstation", "igdb", "alphacoders", "nintendo", "xbox"]
         if isinstance(request, dict):
             title = str(request.get("title", "") or "").strip()
             search_query = str(request.get("query", request.get("search_query", "")) or "").strip()
@@ -3684,7 +5010,7 @@ class Plugin:
             if isinstance(raw_services, list):
                 requested_services = [str(item or "").strip().lower() for item in raw_services]
 
-        valid_services = {"playstation", "igdb", "alphacoders"}
+        valid_services = {"playstation", "igdb", "alphacoders", "nintendo", "xbox"}
         requested_services = [service for service in requested_services if service in valid_services]
         if not title:
             return {"ok": False, "message": "Missing game title.", "results": []}
@@ -3741,7 +5067,7 @@ class Plugin:
                 f"playstation_results={store_count}"
             )
 
-        for service in ("igdb", "alphacoders"):
+        for service in ("igdb", "alphacoders", "nintendo", "xbox"):
             if service not in requested_services:
                 continue
             label = BACKGROUND_SERVICE_CONFIGS[service]["label"]
@@ -3983,16 +5309,17 @@ class Plugin:
             _log_warning(f"Could not read visible windows: {error}")
             visible_windows = []
 
-        _fg_proc = str(foreground.get("process", "")).lower()
-        _launcher_names = {str(n).lower() for n in self.settings.get("launcher_processes", DEFAULT_SETTINGS["launcher_processes"])}
-        _non_game = {"steam.exe", "steamwebhelper.exe", "powershell.exe", "pwsh.exe", "explorer.exe", "searchhost.exe", "startmenuexperiencehost.exe", "shellexperiencehost.exe", "dwm.exe", ""}
-        _game_running = bool(_fg_proc) and _fg_proc not in _non_game and _fg_proc not in _launcher_names
+        # Foreground ownership is not playback state: opening Steam/QAM over a game
+        # must not look like a game exit. Reuse the process snapshot maintained by
+        # the existing monitor and report only validated, still-live game PIDs.
+        _game_running = any(pid in self.known_processes for pid in self.active_game_pids)
         return {
             "is_windows": _is_windows(),
             "curtain_running": self._is_curtain_running(),
             "auto_mode": bool(self.settings.get("auto_mode")),
             "curtain_mode": str(self.settings.get("curtain_mode", "modern")),
             "modern_curtain_show": bool(self.modern_active),
+            "native_prompt_visible": bool(self.native_prompt_visible),
             "game_running": _game_running,
             "foreground": foreground,
             "visible_windows": visible_windows
@@ -4233,9 +5560,11 @@ class Plugin:
         self.launch_game_fullscreen_since = {}
         self.launch_candidate_focus_attempted = set()
         self.modern_escape_down = False
+        self.native_prompt_visible = False
         self.modern_release_after = 0.0
         self.modern_handoff_hwnd = 0
         self.modern_handoff_pid = 0
+        self.launch_action_started_at = 0.0
         self.launch_action_completed_at = 0.0
         _lr_force = str(game_settings.get("force_mode", "auto") or "auto").strip().lower()
         _lr_mode = _lr_force if _lr_force in ("classic", "modern") else str(self.settings.get("curtain_mode", "modern"))
@@ -4386,12 +5715,25 @@ class Plugin:
         self.current_launch_mode = None
         self.current_launch_timeout_enabled = None
         self.current_launch_timeout_seconds = None
+        self.launch_action_started_at = 0.0
+        self.launch_action_completed_at = 0.0
         self.launch_game_candidates = {}
         self.launch_game_fullscreen_since = {}
         self.launch_candidate_focus_attempted = set()
         self.modern_release_after = 0.0
         self.modern_handoff_hwnd = 0
         self.modern_handoff_pid = 0
+        self.native_prompt_visible = False
+
+    async def set_native_prompt_visible(self, request: Any = None) -> Dict[str, Any]:
+        visible = bool(request.get("visible")) if isinstance(request, dict) else bool(request)
+        if visible == self.native_prompt_visible:
+            return {"ok": True, "visible": visible}
+        self.native_prompt_visible = visible
+        if visible:
+            self._release_modern_steam_topmost("native Steam prompt")
+        _log_info(f"Native Steam prompt focus protection suspended={visible}")
+        return {"ok": True, "visible": visible}
 
     async def hide_curtain(self) -> Dict[str, Any]:
         was_modern = bool(self.modern_active)
@@ -4688,6 +6030,7 @@ class Plugin:
     def _schedule_steam_refocus(self, reason: str) -> None:
         now = time.time()
         self.pending_steam_refocus_until = max(self.pending_steam_refocus_until, now + 4.0)
+        self.pending_steam_refocus_not_before = max(self.pending_steam_refocus_not_before, now + 0.9)
         self.last_steam_refocus_attempt_at = 0.0
         _log_info(f"Steam refocus scheduled reason={reason}")
 
@@ -4695,8 +6038,16 @@ class Plugin:
         try:
             for window in _visible_windows(limit=40):
                 process = str(window.get("process", "")).lower()
+                title = str(window.get("title", "")).strip().lower()
                 hwnd = int(window.get("hwnd", 0) or 0)
                 if process in STEAM_PROCESS_NAMES or process in {"powershell.exe", "pwsh.exe"}:
+                    continue
+                if process == "explorer.exe" and (
+                    not title
+                    or title == "program manager"
+                    or "passaggio da un programma all'altro" in title
+                    or "task switching" in title
+                ):
                     continue
                 if _window_is_fullscreen(hwnd):
                     return True
@@ -4730,6 +6081,9 @@ class Plugin:
             return
         if now >= self.pending_steam_refocus_until:
             self.pending_steam_refocus_until = 0.0
+            self.pending_steam_refocus_not_before = 0.0
+            return
+        if now < self.pending_steam_refocus_not_before:
             return
         if self._is_curtain_running() or self.launch_pending_until > now:
             return
@@ -4746,9 +6100,10 @@ class Plugin:
 
         foreground_process = str(foreground.get("process", "")).lower()
         foreground_title = str(foreground.get("title", "")).lower()
-        if foreground_process in {"steam.exe", "steamwebhelper.exe"} and ("steam" in foreground_title or "big picture" in foreground_title):
-            self.pending_steam_refocus_until = 0.0
-            return
+        steam_was_foreground = (
+            foreground_process in {"steam.exe", "steamwebhelper.exe"}
+            and ("steam" in foreground_title or "big picture" in foreground_title)
+        )
 
         if self._visible_fullscreen_non_steam_window_exists():
             return
@@ -4762,9 +6117,15 @@ class Plugin:
             return
 
         focused = _focus_window(hwnd)
-        _log_info(f"Steam refocus attempt focused={focused} hwnd={hwnd} foreground_process={foreground_process}")
+        _log_info(
+            "Steam refocus attempt "
+            f"focused={focused} hwnd={hwnd} "
+            f"steam_was_foreground={steam_was_foreground} "
+            f"foreground_process={foreground_process}"
+        )
         if focused:
             self.pending_steam_refocus_until = 0.0
+            self.pending_steam_refocus_not_before = 0.0
 
     def _release_modern_steam_topmost(self, reason: str = "modern curtain ended") -> None:
         hwnd = int(getattr(self, "modern_steam_topmost_hwnd", 0) or 0)
@@ -4786,6 +6147,123 @@ class Plugin:
             self.modern_steam_topmost_hwnd = hwnd
         return hwnd
 
+    def _track_candidate_surface(self, pid: int, hwnd: int, now: float) -> Dict[str, Any]:
+        candidate = self.launch_game_candidates.setdefault(pid, {"first_seen": now})
+        surfaces = candidate.setdefault("surfaces", {})
+        key = str(hwnd)
+        surface = surfaces.setdefault(
+            key,
+            {
+                "first_seen": now,
+                "last_geometry_change": now,
+                "small_seen": False,
+                "expanded_from_splash": False,
+                "expanded_at": 0.0,
+                "post_expansion_geometry_changes": 0,
+                "strict_fullscreen_since": 0.0,
+            },
+        )
+
+        if candidate.get("auxiliary_surface_seen") and not surface.get("expanded_from_splash"):
+            surface["expanded_from_splash"] = True
+            surface["expanded_at"] = now
+            if not candidate.get("auxiliary_surface_logged"):
+                candidate["auxiliary_surface_logged"] = True
+                _log_info(
+                    "Reusable auxiliary launch-surface transition detected "
+                    f"pid={pid} main_hwnd={hwnd} "
+                    f"auxiliary_hwnd={candidate.get('auxiliary_surface_hwnd', 0)}"
+                )
+
+        rect = _window_rect(hwnd)
+        monitor = _monitor_rect_for_window(hwnd)
+        geometry: Optional[Tuple[int, int, int, int]] = None
+        area_ratio = 0.0
+        if rect is not None:
+            geometry = (rect.left, rect.top, rect.right, rect.bottom)
+        if rect is not None and monitor is not None:
+            width = max(0, rect.right - rect.left)
+            height = max(0, rect.bottom - rect.top)
+            monitor_width = max(1, monitor.right - monitor.left)
+            monitor_height = max(1, monitor.bottom - monitor.top)
+            area_ratio = (width * height) / (monitor_width * monitor_height)
+
+        previous_geometry = surface.get("geometry")
+        if geometry != previous_geometry:
+            if surface.get("expanded_from_splash") and previous_geometry is not None:
+                surface["post_expansion_geometry_changes"] = (
+                    int(surface.get("post_expansion_geometry_changes", 0) or 0) + 1
+                )
+            surface["geometry"] = geometry
+            surface["last_geometry_change"] = now
+            surface["strict_fullscreen_since"] = 0.0
+
+        large = _window_is_large_game_surface(hwnd)
+        strict_fullscreen = _window_is_fullscreen(hwnd)
+        if not large:
+            surface["small_seen"] = True
+        elif surface.get("small_seen"):
+            if not surface.get("expanded_from_splash"):
+                surface["expanded_from_splash"] = True
+                surface["expanded_at"] = now
+                _log_info(
+                    "Reusable splash-window transition detected "
+                    f"pid={pid} hwnd={hwnd} area_ratio={area_ratio:.3f}"
+                )
+
+        if strict_fullscreen:
+            if float(surface.get("strict_fullscreen_since", 0.0) or 0.0) <= 0:
+                surface["strict_fullscreen_since"] = now
+        else:
+            surface["strict_fullscreen_since"] = 0.0
+
+        action_started = float(self.launch_action_started_at or 0.0)
+        action_completed = float(self.launch_action_completed_at or 0.0)
+        action_ready = (
+            action_started <= 0
+            or (
+                action_completed >= action_started
+                and now - action_completed >= SPLASH_LINEAGE_POST_ACTION_SETTLE_SECONDS
+            )
+        )
+        strict_ready = (
+            strict_fullscreen
+            and now - float(surface.get("strict_fullscreen_since", now) or now)
+            >= SPLASH_LINEAGE_FULLSCREEN_SETTLE_SECONDS
+            and action_ready
+        )
+        borderless_ready = (
+            bool(surface.get("expanded_from_splash"))
+            and int(surface.get("post_expansion_geometry_changes", 0) or 0) > 0
+            and _window_is_near_fullscreen_game_surface(hwnd)
+            and now - float(surface.get("last_geometry_change", now) or now)
+            >= SPLASH_LINEAGE_SURFACE_SETTLE_SECONDS
+            and action_ready
+        )
+        expanded_at = float(surface.get("expanded_at", 0.0) or 0.0)
+        fallback_ready = (
+            bool(surface.get("expanded_from_splash"))
+            and large
+            and expanded_at > 0
+            and now - expanded_at >= SPLASH_LINEAGE_BORDERLESS_FALLBACK_SECONDS
+            and now - float(surface.get("last_geometry_change", now) or now) >= 5.0
+            and (
+                action_ready
+                or (
+                    action_started > 0
+                    and now - action_started >= SPLASH_LINEAGE_BORDERLESS_FALLBACK_SECONDS
+                )
+            )
+        )
+
+        return {
+            "expanded_from_splash": bool(surface.get("expanded_from_splash")),
+            "strict_fullscreen": strict_fullscreen,
+            "strict_ready": strict_ready,
+            "borderless_ready": borderless_ready,
+            "fallback_ready": fallback_ready,
+        }
+
     def _find_fullscreen_game_window(
         self,
         processes: Dict[int, Dict[str, Any]],
@@ -4800,37 +6278,25 @@ class Plugin:
         candidate_pids = set(self.launch_game_candidates.keys())
         if not candidate_pids:
             return None
-        # The focus-protection scan is the authoritative source for windows that
-        # actually compete with Steam. Some idTech windows are visible there but
-        # disappear from the second, larger EnumWindows scan below. Reuse the HWND
-        # observed by protection once it has stayed unchanged and recently visible.
-        for pid, candidate_state in self.launch_game_candidates.items():
-            protected_hwnd = int(candidate_state.get("protected_hwnd", 0) or 0)
-            protected_since = float(candidate_state.get("protected_since", now))
-            protected_last_seen = float(candidate_state.get("protected_last_seen", 0.0))
-            first_seen = float(candidate_state.get("first_seen", now))
-            if (
-                protected_hwnd > 0
-                and now - first_seen >= 8.0
-                and now - protected_since >= 5.0
-                and now - protected_last_seen <= 2.0
-                and protected_hwnd in _windows_for_pid(pid, limit=12)
-            ):
-                process_info = processes.get(pid, {})
-                return {
-                    "pid": pid,
-                    "process": str(candidate_state.get("protected_process") or process_info.get("process", "")),
-                    "title": str(candidate_state.get("protected_title", "")),
-                    "hwnd": protected_hwnd,
-                    "ready_kind": "protected-process-stable",
-                }
         near_fullscreen: List[Tuple[int, Dict[str, Any]]] = []
         process_ready: List[Tuple[int, Dict[str, Any]]] = []
         stable_process_windows: List[Tuple[int, Dict[str, Any]]] = []
         near_ready_delay = max(5.0, float(self.settings.get("game_settle_seconds", DEFAULT_SETTINGS["game_settle_seconds"])))
         process_ready_delay = max(8.0, near_ready_delay + 2.0)
         try:
-            for window in _visible_windows(limit=180):
+            visible_windows_snapshot = _visible_windows(limit=180)
+            for window in visible_windows_snapshot:
+                pid = int(window.get("pid", 0) or 0)
+                if pid not in candidate_pids:
+                    continue
+                hwnd = int(window.get("hwnd", 0) or 0)
+                if hwnd <= 0 or not _window_is_auxiliary_game_surface(hwnd):
+                    continue
+                candidate_state = self.launch_game_candidates.get(pid, {})
+                candidate_state["auxiliary_surface_seen"] = True
+                candidate_state["auxiliary_surface_hwnd"] = hwnd
+
+            for window in visible_windows_snapshot:
                 pid = int(window.get("pid", 0) or 0)
                 if pid not in candidate_pids:
                     continue
@@ -4839,11 +6305,21 @@ class Plugin:
                 hwnd = int(window.get("hwnd", 0) or 0)
                 if hwnd <= 0 or process in IGNORED_LAUNCH_CHILDREN:
                     continue
+                if _window_is_auxiliary_game_surface(hwnd):
+                    continue
                 if process in launcher_names or any(hint in title for hint in LAUNCHER_TITLE_HINTS):
                     continue
+                surface_state = self._track_candidate_surface(pid, hwnd, now)
+                splash_lineage = bool(surface_state.get("expanded_from_splash"))
                 if _window_is_fullscreen(hwnd):
+                    if (
+                        splash_lineage
+                        and not surface_state.get("strict_ready")
+                        and not surface_state.get("borderless_ready")
+                    ):
+                        continue
                     result = dict(window)
-                    result["ready_kind"] = "fullscreen"
+                    result["ready_kind"] = "fullscreen-after-splash" if splash_lineage else "fullscreen"
                     return result
                 first_seen = float(self.launch_game_candidates.get(pid, {}).get("first_seen", now))
                 candidate_state = self.launch_game_candidates.get(pid, {})
@@ -4852,13 +6328,27 @@ class Plugin:
                 if hwnd_key not in visible_windows:
                     visible_windows[hwnd_key] = now
                 visible_since = float(visible_windows.get(hwnd_key, now))
+                if (
+                    splash_lineage
+                    and not surface_state.get("borderless_ready")
+                    and not surface_state.get("fallback_ready")
+                ):
+                    continue
                 if now - first_seen >= near_ready_delay and _window_is_near_fullscreen_game_surface(hwnd):
                     result = dict(window)
-                    result["ready_kind"] = "near-fullscreen"
+                    result["ready_kind"] = (
+                        "borderless-after-splash"
+                        if surface_state.get("borderless_ready")
+                        else (
+                            "splash-lineage-borderless-fallback"
+                            if splash_lineage
+                            else "near-fullscreen"
+                        )
+                    )
                     near_fullscreen.append((_window_area(hwnd), result))
                 elif now - first_seen >= process_ready_delay and _window_is_process_ready_game_surface(hwnd):
                     result = dict(window)
-                    result["ready_kind"] = "tracked-process-window"
+                    result["ready_kind"] = "splash-lineage-borderless-fallback" if splash_lineage else "tracked-process-window"
                     process_ready.append((_window_area(hwnd), result))
                 elif now - first_seen >= 8.0 and now - visible_since >= 5.0:
                     # The real game executable may expose a render window whose Win32
@@ -4867,7 +6357,7 @@ class Plugin:
                     # process and remaining visible with the same HWND for five seconds
                     # is stronger evidence than its reported geometry.
                     result = dict(window)
-                    result["ready_kind"] = "tracked-process-stable"
+                    result["ready_kind"] = "splash-lineage-borderless-fallback" if splash_lineage else "tracked-process-stable"
                     stable_process_windows.append((_window_area(hwnd), result))
             if near_fullscreen:
                 near_fullscreen.sort(key=lambda item: item[0], reverse=True)
@@ -4880,6 +6370,54 @@ class Plugin:
                 return stable_process_windows[0][1]
         except Exception as error:
             _log_warning(f"Ready launch-candidate scan failed: {error}")
+
+        # The focus-protection scan is the authoritative source for windows that
+        # actually compete with Steam. Some idTech windows are visible there but
+        # disappear from the second, larger EnumWindows scan above. Reuse that HWND
+        # only after rejecting auxiliary and expanding-splash surfaces.
+        for pid, candidate_state in self.launch_game_candidates.items():
+            protected_hwnd = int(candidate_state.get("protected_hwnd", 0) or 0)
+            protected_since = float(candidate_state.get("protected_since", now))
+            protected_last_seen = float(candidate_state.get("protected_last_seen", 0.0))
+            first_seen = float(candidate_state.get("first_seen", now))
+            if protected_hwnd <= 0 or _window_is_auxiliary_game_surface(protected_hwnd):
+                continue
+            surface_state = self._track_candidate_surface(pid, protected_hwnd, now)
+            if (
+                surface_state.get("expanded_from_splash")
+                and not surface_state.get("strict_ready")
+                and not surface_state.get("borderless_ready")
+                and not surface_state.get("fallback_ready")
+            ):
+                continue
+            if (
+                protected_hwnd > 0
+                and now - first_seen >= 8.0
+                and now - protected_since >= 5.0
+                and now - protected_last_seen <= 2.0
+                and protected_hwnd in _windows_for_pid(pid, limit=12)
+            ):
+                process_info = processes.get(pid, {})
+                ready_kind = (
+                    "fullscreen-after-splash"
+                    if surface_state.get("strict_ready")
+                    else (
+                        "borderless-after-splash"
+                        if surface_state.get("borderless_ready")
+                        else (
+                            "splash-lineage-borderless-fallback"
+                            if surface_state.get("fallback_ready")
+                            else "protected-process-stable"
+                        )
+                    )
+                )
+                return {
+                    "pid": pid,
+                    "process": str(candidate_state.get("protected_process") or process_info.get("process", "")),
+                    "title": str(candidate_state.get("protected_title", "")),
+                    "hwnd": protected_hwnd,
+                    "ready_kind": ready_kind,
+                }
         return None
 
     def _find_any_tracked_game_window(self, launcher_names: set[str]) -> Optional[Dict[str, Any]]:
@@ -5057,6 +6595,14 @@ class Plugin:
 
                 if _modern:
                     now = time.time()
+                    if (
+                        self.modern_active
+                        and self.modern_started_at > 0
+                        and now - self.modern_started_at >= MODERN_FAIL_OPEN_SECONDS
+                    ):
+                        _log_warning("Modern curtain fail-open watchdog expired; releasing Steam UI")
+                        await self.hide_curtain()
+                        continue
 
                     # While a hand-off is pending, keep the React curtain fully visible.
                     # Release Steam only for a verified focus attempt; the frontend is told
@@ -5095,8 +6641,10 @@ class Plugin:
                                         "Modern game focus not yet accepted; keeping curtain visible "
                                         f"pid={target_pid} hwnd={target_hwnd}"
                                     )
-                    elif self.modern_active:
+                    elif self.modern_active and not self.native_prompt_visible:
                         self._protect_modern_curtain(foreground, launcher_names, processes)
+                    elif self.modern_active and self.native_prompt_visible and self.modern_steam_topmost_hwnd:
+                        self._release_modern_steam_topmost("native Steam prompt remains visible")
                     elif self.modern_hidden_launcher_windows or self.modern_steam_topmost_hwnd or self.modern_release_after > 0:
                         self._restore_modern_launcher_windows("modern hand-off complete")
 
@@ -5105,26 +6653,12 @@ class Plugin:
                         game_pid = int(fullscreen_game_window.get("pid", 0) or 0)
                         game_process = str(fullscreen_game_window.get("process", "") or "").lower()
                         handoff_settle = _modern_handoff_settle_seconds(game_process, game_settle)
-                        post_action_settle = POST_GAME_ACTION_SETTLE_PROCESSES.get(game_process, 0.0)
-                        action_fallback = POST_GAME_ACTION_FALLBACK_PROCESSES.get(game_process, 0.0)
                         if game_pid > 0:
                             self.active_game_pids.setdefault(game_pid, now)
                         if self.game_seen_since <= 0:
                             self.game_seen_since = now
                         surface_ready = now - self.game_seen_since >= handoff_settle
-                        action_ready = post_action_settle <= 0
-                        readiness_reason = "surface"
-                        if post_action_settle > 0:
-                            action_ready = (
-                                self.launch_action_completed_at > 0
-                                and now - self.launch_action_completed_at >= post_action_settle
-                            )
-                            if action_ready:
-                                readiness_reason = "steam-action-complete"
-                            elif action_fallback > 0 and now - self.game_seen_since >= action_fallback:
-                                action_ready = True
-                                readiness_reason = "bounded-fallback"
-                        if surface_ready and action_ready and (now - self.modern_started_at >= min_visible):
+                        if surface_ready and (now - self.modern_started_at >= min_visible):
                             self.modern_handoff_hwnd = game_hwnd
                             self.modern_handoff_pid = game_pid
                             self.modern_release_after = now + 2.0
@@ -5134,7 +6668,7 @@ class Plugin:
                                 "curtain remains visible until game focus is verified"
                                 f" kind={ready_kind} pid={game_pid} hwnd={game_hwnd} "
                                 f"process={game_process} settle_seconds={handoff_settle} "
-                                f"readiness={readiness_reason} post_action_settle={post_action_settle}"
+                                f"readiness={ready_kind}"
                             )
                     elif self.modern_active and self.modern_release_after <= 0 and bool(getattr(self, "current_launch_timeout_enabled", self.settings.get("timeout_enabled", DEFAULT_SETTINGS["timeout_enabled"]))) and self.launch_pending_until > 0 and now >= self.launch_pending_until:
                         _log_info("Modern curtain hand-off: timeout; closing without a game target")

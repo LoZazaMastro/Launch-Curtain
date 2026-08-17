@@ -316,11 +316,28 @@ function Content() {
         }
     };
     const runPlayStationBulk = async (remove = false) => {
+        const hasExistingCurtain = (game) => {
+            if (remove)
+                return false;
+            const perGame = settings?.per_game?.[String(game.app_id)];
+            return Boolean(String(perGame?.fullscreen_image_path ?? "").trim());
+        };
         const games = collectSteamAppsForCache()
-            .filter((game) => !game.is_shortcut && game.title && !/^App \d+$/i.test(game.title))
+            .filter((game) => (
+                !game.is_shortcut
+                && game.title
+                && !/^App \d+$/i.test(game.title)
+                && (remove || game.is_installed)
+                && !hasExistingCurtain(game)
+            ))
             .sort((a, b) => String(a.title).localeCompare(String(b.title)));
-        if (!games.length)
+        if (!games.length) {
+            toaster.toast({
+                title: strings.toastAttention,
+                body: remove ? strings.playStationBulkError : strings.noInstalledGames
+            });
             return;
+        }
         setBusy(true);
         let applied = 0;
         let skipped = 0;
@@ -400,7 +417,7 @@ function Content() {
             SP_JSX.jsx(DFL.DropdownItem, { label: strings.exitDelay ?? I18N.en.exitDelay ?? "Exit delay", rgOptions: exitDelayOptions, selectedOption: selectedExitDelay, disabled: busy || !settings, onChange: (option) => { if (typeof option.data === "number") void setExitDelayValue(option.data); } }),
             playStationBulkStatus ? SP_JSX.jsxs("div", { className: "lcQamStatus", children: [`${playStationBulkStatus.remove ? strings.removingPlayStationAssets : strings.downloadingPlayStationAssets} (${playStationBulkStatus.current}/${playStationBulkStatus.total})`, SP_JSX.jsx("div", { style: { marginTop: 3, fontWeight: 700 }, children: playStationBulkStatus.title })] }) : null,
             SP_JSX.jsxs(DFL.Focusable, { "flow-children": "column", className: "lcQamButtonStack", children: [
-                SP_JSX.jsx(QamButton, { icon: SP_JSX.jsx(FaDownload, {}), disabled: busy || !settings, onClick: () => { void runPlayStationBulk(false); }, children: strings.downloadPlayStationAssets }),
+                SP_JSX.jsx(QamButton, { icon: SP_JSX.jsx(FaDownload, {}), disabled: busy || !settings, onClick: () => { void runPlayStationBulk(false); }, children: strings.downloadPlayStationAssetsInstalled }),
                 SP_JSX.jsx(QamButton, { icon: SP_JSX.jsx(FaTrashAlt, {}), disabled: busy || !settings, onClick: () => { void runPlayStationBulk(true); }, children: strings.removePlayStationAssets })
             ] })
         ] }),
@@ -439,10 +456,22 @@ const collectSteamAppsForCache = () => {
         if (!Number.isFinite(appId) || appId <= 0)
             return;
         const overview = getAppOverviewSafe(appId) || entry;
+        let isInstalled = false;
+        try {
+            isInstalled = overview?.BIsInstalled?.() === true;
+        }
+        catch (_error) {}
+        isInstalled = isInstalled
+            || overview?.local_per_client_data?.installed === true
+            || entry?.local_per_client_data?.installed === true
+            || overview?.installed === true
+            || entry?.installed === true
+            || Number(overview?.size_on_disk ?? entry?.size_on_disk ?? 0) > 0;
         byId.set(appId, {
             app_id: appId,
             title: overview?.display_name || overview?.localized_name || overview?.name || entry?.title || `App ${appId}`,
-            is_shortcut: Boolean(overview?.BIsShortcut?.() || overview?.BIsModOrShortcut?.() || Number(overview?.app_type) === 1073741824 || appId >= 2147483648)
+            is_shortcut: Boolean(overview?.BIsShortcut?.() || overview?.BIsModOrShortcut?.() || Number(overview?.app_type) === 1073741824 || appId >= 2147483648),
+            is_installed: isInstalled
         });
     };
     try {
@@ -1132,7 +1161,7 @@ function GameSettingsPage() {
             ] }) })
         ] }),
         SP_JSX.jsx(SettingsCard, { title: strings.downloadBackgrounds || strings.scrapers, description: strings.scrapersHelp, children: SP_JSX.jsxs(SP_REACT.Fragment, { children: [
-            scraperTabs([{ id: "playstation", label: "PlayStation" }, { id: "igdb", label: "IGDB" }, { id: "alphacoders", label: "AlphaCoders" }], activeScraper, (next) => { setActiveScraper(next); setFocusedScraper(""); setImageResults([]); setImageSearchMessage(""); setPlayStationMessage(""); }),
+            scraperTabs([{ id: "playstation", label: "PlayStation" }, { id: "igdb", label: "IGDB" }, { id: "alphacoders", label: "AlphaCoders" }, { id: "nintendo", label: "Nintendo" }, { id: "xbox", label: "Xbox" }], activeScraper, (next) => { setActiveScraper(next); setFocusedScraper(""); setImageResults([]); setImageSearchMessage(""); setPlayStationMessage(""); }),
             scraperContent
         ] }) }),
         SP_JSX.jsx(DFL.DialogButton, { focusable: true, className: "lc-close-button", onClick: () => { try { DFL.Navigation?.NavigateBack?.(); } catch (_error) {} }, children: strings.close || "Close" })

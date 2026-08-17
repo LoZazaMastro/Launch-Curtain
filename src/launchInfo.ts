@@ -9,7 +9,25 @@ export function initLaunchInfo() {
     const scaLog = callable("sca_input_diag");
     const strings = getStrings();
     const A = (typeof SteamClient !== "undefined") ? SteamClient : (window && window.SteamClient);
-    if (!A || !A.Apps) { try { scaLog("LAUNCHINFO no SteamClient.Apps"); } catch (e) {} return; }
+    if (!A || !A.Apps) { try { scaLog("LAUNCHINFO no SteamClient.Apps"); } catch (e) {} return function () {}; }
+    const registryKey = "__playhubLaunchCurtainLaunchInfoCleanup";
+    try { if (typeof A.Apps[registryKey] === "function") A.Apps[registryKey](); } catch (e) {}
+    const registrations = [];
+    const keep = function (registration) {
+      if (registration) registrations.push(registration);
+      return registration;
+    };
+    const release = function (registration) {
+      try {
+        if (typeof registration === "function") registration();
+        else if (registration) {
+          if (typeof registration.Unregister === "function") registration.Unregister();
+          else if (typeof registration.unregister === "function") registration.unregister();
+          else if (typeof registration.Dispose === "function") registration.Dispose();
+          else if (typeof registration.dispose === "function") registration.dispose();
+        }
+      } catch (e) {}
+    };
     try { scaLog("LAUNCHINFO GameAction keys=" + Object.keys(A.Apps).filter(function (k) { return /GameAction/i.test(k); }).join(",")); } catch (e) {}
     let logged = 0;
     const dbg = function (t) { try { if (logged < 40) { logged++; scaLog(t); } } catch (e) {} };
@@ -70,24 +88,31 @@ export function initLaunchInfo() {
       else if (textish) send(humanize(textish));
     };
     if (typeof A.Apps.RegisterForGameActionStart === "function") {
-      A.Apps.RegisterForGameActionStart(function () {
+      keep(A.Apps.RegisterForGameActionStart(function () {
         dbg("GA_START " + JSON.stringify(Array.prototype.slice.call(arguments)));
         send(strings.launchStarting, "start");
-      });
+      }));
     }
     if (typeof A.Apps.RegisterForGameActionTaskChange === "function") {
-      A.Apps.RegisterForGameActionTaskChange(onTask);
+      keep(A.Apps.RegisterForGameActionTaskChange(onTask));
     }
     if (typeof A.Apps.RegisterForGameActionEnd === "function") {
-      A.Apps.RegisterForGameActionEnd(function () {
+      keep(A.Apps.RegisterForGameActionEnd(function () {
         dbg("GA_END " + JSON.stringify(Array.prototype.slice.call(arguments)));
         send(strings.launchWaitingGame, "complete");
-      });
+      }));
     }
     if (typeof A.Apps.RegisterForGameActionShowError === "function") {
-      A.Apps.RegisterForGameActionShowError(function () {
+      keep(A.Apps.RegisterForGameActionShowError(function () {
         dbg("GA_ERR " + JSON.stringify(Array.prototype.slice.call(arguments)));
-      });
+      }));
     }
+    const cleanup = function () {
+      registrations.splice(0).forEach(release);
+      try { if (A.Apps[registryKey] === cleanup) delete A.Apps[registryKey]; } catch (e) {}
+    };
+    A.Apps[registryKey] = cleanup;
+    return cleanup;
   } catch (e) {}
+  return function () {};
 }

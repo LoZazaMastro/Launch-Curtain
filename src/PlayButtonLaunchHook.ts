@@ -1,9 +1,13 @@
-import { PLAY_LABELS, BLOCKED_PLAY_LABEL_HINTS, PROBATION_COVER_MS, LAUNCH_BRIDGE_COVER_MS, CONFIRMED_LAUNCH_COVER_MS, POST_PLAY_CONFIRM_COVER_MS, POST_PLAY_ARM_MS, POST_PLAY_CONFIRM_PATTERN } from "./constants";
-import { debugLog, getImagePreview, getStatus, hideBlackCover, hideCurtain, launchRequested, resolveGameLogo, showBlackCover } from "./backend";
+import { PLAY_LABELS, BLOCKED_PLAY_LABEL_HINTS, PROBATION_COVER_MS, LAUNCH_BRIDGE_COVER_MS, CONFIRMED_LAUNCH_COVER_MS, POST_PLAY_CONFIRM_COVER_MS, POST_PLAY_ARM_MS, POST_PLAY_CONFIRM_PATTERN, POST_PLAY_CANCEL_PATTERN } from "./constants";
+import { debugLog, getImagePreview, getStatus, hideBlackCover, hideCurtain, launchRequested, resolveGameLogo, setNativePromptVisible, showBlackCover } from "./backend";
+
+const POST_PLAY_PROMPT_HOLD_MS = 5 * 60 * 1000;
+const MODERN_FAIL_OPEN_MS = 75 * 1000;
 
 // Hook del pulsante Play + instant curtain (DOM in-CEF). Ricostruito dal dist.
 class PlayButtonLaunchHook {
     constructor() {
+        this.instanceId = `launch-curtain-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         this.enabled = false;
         this.setupDone = false;
         this.lastTriggerAt = 0;
@@ -11,13 +15,20 @@ class PlayButtonLaunchHook {
         this.postPlayCoverUntil = 0;
         this.postPlayCoverReadyAt = 0;
         this.lastPostPlayCoverAt = 0;
+        this.promptWatchTimer = undefined;
+        this.promptSuspended = false;
+        this.popupCreatedRegistration = undefined;
+        this.popupDestroyedRegistration = undefined;
         this.methodRestorers = [];
         this.instantCurtainExpiresAt = 0;
+        this.instantCurtainSafetyTimer = undefined;
         this.instantCurtainVisible = false;
         this.backendLaunchToken = 0;
         this.prearmLogoToken = 0;
         this.gamepadClosePressed = false;
         this.gamepadLaunchPressed = false;
+        this.gamepadLaunchArmedButton = undefined;
+        this.gamepadLaunchArmedAppId = undefined;
         this.gamepadCloseIgnoreUntil = 0;
         this.gamepadCloseOverlayRunning = false;
         this.gamepadCloseStatusCheckedAt = 0;
@@ -42,16 +53,28 @@ class PlayButtonLaunchHook {
         this.instantAnimationEpoch = 0;
         this.instantAnimationStartedAt = 0;
         this.gameRunning = false;
+        this.suppressPrearmUntil = 0;
+        this.dismissInputSuppressionUntil = 0;
+        this.gamepadClosePending = false;
         this.uiMode = undefined;
         this.handlePointerDown = (event) => {
+            if (this.cancelPostPlayInteraction("post-play pointerdown", event.target, event.composedPath())) {
+                return;
+            }
             this.coverPostPlayInteraction("post-play pointerdown", event.target, event.composedPath());
             this.handleLaunchInput("play button pointerdown", event.target, event.composedPath());
         };
         this.handleMouseDown = (event) => {
+            if (this.cancelPostPlayInteraction("post-play mousedown", event.target, event.composedPath())) {
+                return;
+            }
             this.coverPostPlayInteraction("post-play mousedown", event.target, event.composedPath());
             this.handleLaunchInput("play button mousedown", event.target, event.composedPath());
         };
         this.handleTouchStart = (event) => {
+            if (this.cancelPostPlayInteraction("post-play touchstart", event.target, event.composedPath())) {
+                return;
+            }
             this.coverPostPlayInteraction("post-play touchstart", event.target, event.composedPath());
             this.handleLaunchInput("play button touchstart", event.target, event.composedPath());
         };
@@ -62,13 +85,27 @@ class PlayButtonLaunchHook {
             this.prearmFromEvent(event.target, event.composedPath());
         };
         this.handleClick = (event) => {
+            if (this.cancelPostPlayInteraction("post-play click", event.target, event.composedPath())) {
+                return;
+            }
+            this.coverPostPlayInteraction("post-play click", event.target, event.composedPath());
             this.handleLaunchInput("play button click", event.target, event.composedPath());
         };
         this.handleKeyClose = (event) => {
-            if (event.key === "Escape" && this.instantCurtainVisible) {
+            const now = Date.now();
+            const dismissKey = event.key === "Escape"
+                || event.key === "BrowserBack"
+                || event.code === "Escape"
+                || event.keyCode === 27;
+            const closeSurfaceActive = this.instantCurtainVisible || this.gamepadCloseOverlayRunning;
+            if (dismissKey && (closeSurfaceActive || now < this.dismissInputSuppressionUntil)) {
                 event.preventDefault();
                 event.stopPropagation();
-                this.requestCloseAllCurtains();
+                event.stopImmediatePropagation?.();
+                if (closeSurfaceActive) {
+                    this.dismissInputSuppressionUntil = now + 900;
+                    this.requestCloseAllCurtains();
+                }
                 return true;
             }
             return false;
@@ -80,9 +117,14 @@ class PlayButtonLaunchHook {
             if (!["Enter", " "].includes(event.key)) {
                 return;
             }
-            this.coverPostPlayInteraction("post-play keydown", document.activeElement, []);
-            if (this.isPlayButtonEvent(document.activeElement, [])) {
-                this.handleLaunchInput("play button keydown", document.activeElement, []);
+            const eventTarget = event.target || event.currentTarget?.activeElement || document.activeElement;
+            const eventPath = typeof event.composedPath === "function" ? event.composedPath() : [];
+            if (this.cancelPostPlayInteraction("post-play keydown", eventTarget, eventPath)) {
+                return;
+            }
+            this.coverPostPlayInteraction("post-play keydown", eventTarget, eventPath);
+            if (this.isPlayButtonEvent(eventTarget, eventPath)) {
+                this.handleLaunchInput("play button keydown", eventTarget, eventPath);
             }
         };
         this.handleVisibilityChange = () => {
@@ -96,6 +138,20 @@ class PlayButtonLaunchHook {
         if (this.setupDone) {
             return;
         }
+        const registryHost = window.SteamClient?.Apps;
+        const registryKey = "__playhubLaunchCurtainPlayHook";
+        try {
+            const previousHook = registryHost?.[registryKey];
+            if (previousHook && previousHook !== this && typeof previousHook.cleanup === "function") {
+                previousHook.cleanup();
+            }
+            if (registryHost) {
+                registryHost[registryKey] = this;
+                this.registryHost = registryHost;
+                this.registryKey = registryKey;
+            }
+        }
+        catch (_error) {}
         this.setupDone = true;
         this.ensureInstantCurtainPrepared();
         document.addEventListener("pointerdown", this.handlePointerDown, true);
@@ -109,6 +165,7 @@ class PlayButtonLaunchHook {
         document.addEventListener("visibilitychange", this.handleVisibilityChange);
         window.addEventListener("focus", this.handleWindowFocus);
         this.patchSteamClient();
+        this.registerSteamPopupHooks();
         this.startGamepadLaunchPolling();
         this.startArmPoll();
         this.pollTimer = window.setInterval(() => this.patchSteamClient(), 1000);
@@ -125,9 +182,12 @@ class PlayButtonLaunchHook {
         document.removeEventListener("visibilitychange", this.handleVisibilityChange);
         window.removeEventListener("focus", this.handleWindowFocus);
         this.restoreMethodPatches();
+        this.stopPromptWatch();
+        this.unregisterSteamPopupHooks();
         this.stopGamepadLaunchPolling();
         this.stopArmPoll();
         this.hideInstantCurtain();
+        void setNativePromptVisible({ visible: false }).catch(() => {});
         void hideBlackCover().catch((error) => {
             console.warn("Launch Curtain black pre-cover cleanup failed", error);
         });
@@ -138,6 +198,14 @@ class PlayButtonLaunchHook {
         }
         this.clearPendingBackendLaunch();
         this.patchedApps = undefined;
+        try {
+            if (this.registryHost?.[this.registryKey] === this) {
+                delete this.registryHost[this.registryKey];
+            }
+        }
+        catch (_error) {}
+        this.registryHost = undefined;
+        this.registryKey = undefined;
         this.setupDone = false;
     }
     setEnabled(enabled) {
@@ -218,7 +286,13 @@ class PlayButtonLaunchHook {
         }, 0);
     }
     prearmFromEvent(target, composedPath) {
-        if (!this.enabled || this.instantCurtainVisible || !this.isPlayButtonEvent(target, composedPath)) {
+        if (
+            !this.enabled
+            || this.instantCurtainVisible
+            || this.gameRunning
+            || Date.now() < this.suppressPrearmUntil
+            || !this.isPlayButtonEvent(target, composedPath)
+        ) {
             return;
         }
         const appId = this.findAppIdForEvent(target, composedPath);
@@ -237,7 +311,7 @@ class PlayButtonLaunchHook {
         const candidates = [];
         const path = composedPath.length > 0 ? composedPath : this.parentPath(target);
         for (const item of path.slice(0, 10)) {
-            if (!(item instanceof HTMLElement)) {
+            if (!this.isElementNode(item)) {
                 continue;
             }
             const isCandidate = item.tagName === "BUTTON"
@@ -251,26 +325,61 @@ class PlayButtonLaunchHook {
     }
     parentPath(target) {
         const path = [];
-        let current = target instanceof HTMLElement ? target : null;
+        let current = this.isElementNode(target) ? target : null;
         while (current && path.length < 10) {
             path.push(current);
             current = current.parentElement;
         }
         return path;
     }
+    isElementNode(candidate) {
+        return Boolean(candidate && candidate.nodeType === 1 && typeof candidate.getAttribute === "function");
+    }
     isExactPlayButton(element) {
         if (this.hasBlockedContext(element)) {
             return false;
         }
-        const labels = this.getLabels(element);
-        return labels.some((label) => {
-            const normalized = this.normalizeLabel(label);
-            if (BLOCKED_PLAY_LABEL_HINTS.test(label)) {
-                return false;
-            }
-            return PLAY_LABELS.has(normalized)
-                || Array.from(PLAY_LABELS).some((playLabel) => normalized.startsWith(`${playLabel} `));
-        });
+
+        // Steam library capsules may expose accessibility labels such as
+        // "Play <game title>" even though activating them only opens the game
+        // details page. Treating every label that starts with Play/Gioca as a
+        // launch action makes the speculative curtain appear during navigation.
+        //
+        // A real details-page Play control has visible Play text, or is an
+        // icon-only control with an exact accessible Play label. Native
+        // SteamClient RunGame hooks remain the final launch confirmation.
+        const href = String(element.getAttribute("href") || "").trim();
+        const role = this.normalizeLabel(element.getAttribute("role") || "");
+        if (
+            element.tagName === "A"
+            || role === "link"
+            || (href && !/^steam:\/\/(?:run|rungameid)\//i.test(href))
+        ) {
+            return false;
+        }
+
+        const visibleText = String(element.innerText || "").trim();
+        if (visibleText) {
+            return this.isExactPlayLabel(visibleText);
+        }
+
+        const fallbackText = String(element.textContent || "").trim();
+        if (fallbackText) {
+            return this.isExactPlayLabel(fallbackText);
+        }
+
+        const accessibleLabels = [
+            element.getAttribute("aria-label") ?? "",
+            element.getAttribute("title") ?? ""
+        ];
+        return accessibleLabels.some((label) => this.isExactPlayLabel(label));
+    }
+    isExactPlayLabel(label) {
+        const trimmed = String(label || "").trim();
+        if (!trimmed || trimmed.length > 24 || BLOCKED_PLAY_LABEL_HINTS.test(trimmed)) {
+            return false;
+        }
+        return PLAY_LABELS.has(this.normalizeLabel(trimmed));
     }
     hasBlockedContext(element) {
         let current = element;
@@ -309,7 +418,7 @@ class PlayButtonLaunchHook {
         const sources = [];
         const path = composedPath.length > 0 ? composedPath : this.parentPath(target);
         for (const item of path.slice(0, 16)) {
-            if (!(item instanceof HTMLElement)) {
+            if (!this.isElementNode(item)) {
                 continue;
             }
             const reactAppId = this.readReactAppId(item);
@@ -779,6 +888,7 @@ class PlayButtonLaunchHook {
         this.lastTriggerAt = now;
         this.postPlayCoverUntil = now + POST_PLAY_ARM_MS;
         this.postPlayCoverReadyAt = now + Math.min(1100, PROBATION_COVER_MS);
+        this.startPromptWatch();
         const effectiveShortcut = isShortcut || Boolean(appId && appId >= 2147483648);
         const effectiveLogoSource = gameSettings.show_logo === false ? undefined : logoSource;
         if (confirmedLaunch) {
@@ -853,11 +963,24 @@ class PlayButtonLaunchHook {
             this.backendLaunchTimer = undefined;
         }
     }
-    showInstantLaunchSurface() {
+    showInstantLaunchSurface(appId) {
         this.showNativeBlackCover("SteamClient immediate black cover", LAUNCH_BRIDGE_COVER_MS);
-        this.currentBackdropAppId = undefined;
-        this.paintInstantBackdrop("", 0);
-        this.setInstantCurtainLogo("", false);
+        const targetAppId = appId || this.prearmedInstantAppId || this.currentBackdropAppId;
+        if (targetAppId) {
+            const settings = this.gameSettingsForApp(targetAppId);
+            const logoSource = settings.show_logo === false ? undefined : this.findGameLogoSource(targetAppId);
+            this.prearmInstantCurtain(
+                targetAppId,
+                logoSource,
+                targetAppId >= 2147483648,
+                settings.show_logo !== false
+            );
+        }
+        else {
+            this.currentBackdropAppId = undefined;
+            this.paintInstantBackdrop("", 0);
+            this.setInstantCurtainLogo("", false);
+        }
         this.revealInstantCurtain(PROBATION_COVER_MS);
     }
     showNativeBlackCover(reason, ttlMs = PROBATION_COVER_MS) {
@@ -881,19 +1004,62 @@ class PlayButtonLaunchHook {
         if (now < this.postPlayCoverReadyAt || now > this.postPlayCoverUntil) {
             return false;
         }
-        if (this.instantCurtainVisible || now - this.lastPostPlayCoverAt < 550) {
+        if (this.instantCurtainVisible || (!this.promptSuspended && now - this.lastPostPlayCoverAt < 550)) {
             return false;
         }
         if (!this.isPostPlayConfirmCandidate(target, composedPath)) {
             return false;
         }
         this.lastPostPlayCoverAt = now;
+        this.promptSuspended = false;
+        void setNativePromptVisible({ visible: false }).catch(() => {});
         this.showNativeBlackCover(reason, POST_PLAY_CONFIRM_COVER_MS);
         this.revealInstantCurtain(POST_PLAY_CONFIRM_COVER_MS);
         return true;
     }
-    isPostPlayConfirmCandidate(target, composedPath) {
+    cancelPostPlayInteraction(reason, target, composedPath) {
+        const now = Date.now();
+        if (!this.enabled || this.postPlayCoverUntil <= 0 || now > this.postPlayCoverUntil) {
+            return false;
+        }
+        if (!this.isPostPlayCancelCandidate(target, composedPath)) {
+            return false;
+        }
+        this.dbg(`${reason}: Steam launch cancelled`);
+        window.setTimeout(() => this.requestCloseAllCurtains(), 0);
+        return true;
+    }
+    postPlayPromptSelector() {
+        return '[role="dialog"], [role="menu"], [aria-modal="true"], [class*="Modal"], [class*="modal"], [class*="Dialog"], [class*="dialog"], [class*="Popup"], [class*="popup"]';
+    }
+    getPostPlayCandidateElements(target, composedPath) {
         const candidates = this.getCandidateElements(target, composedPath);
+        const path = composedPath.length > 0 ? composedPath : this.parentPath(target);
+        for (const item of path.slice(0, 12)) {
+            if (!this.isElementNode(item)) {
+                continue;
+            }
+            const role = item.getAttribute("role");
+            if ((role === "menuitem" || role === "option") && !candidates.includes(item)) {
+                candidates.push(item);
+            }
+        }
+        return candidates;
+    }
+    isPostPlayCancelCandidate(target, composedPath) {
+        return this.getPostPlayCandidateElements(target, composedPath).some((element) => {
+            const promptAncestor = element.closest?.(this.postPlayPromptSelector());
+            if (!this.isElementNode(promptAncestor)) {
+                return false;
+            }
+            return this.getLabels(element).some((label) => POST_PLAY_CANCEL_PATTERN.test(this.normalizeLabel(label)));
+        });
+    }
+    isPostPlayConfirmCandidate(target, composedPath) {
+        if (this.isPostPlayCancelCandidate(target, composedPath)) {
+            return false;
+        }
+        const candidates = this.getPostPlayCandidateElements(target, composedPath);
         if (candidates.length <= 0) {
             return false;
         }
@@ -902,8 +1068,8 @@ class PlayButtonLaunchHook {
             if (POST_PLAY_CONFIRM_PATTERN.test(labels)) {
                 return true;
             }
-            const promptAncestor = element.closest?.('[role="dialog"], [aria-modal="true"], [class*="Modal"], [class*="modal"], [class*="Dialog"], [class*="dialog"], [class*="Popup"], [class*="popup"]');
-            if (!(promptAncestor instanceof HTMLElement)) {
+            const promptAncestor = element.closest?.(this.postPlayPromptSelector());
+            if (!this.isElementNode(promptAncestor)) {
                 return false;
             }
             const rect = promptAncestor.getBoundingClientRect();
@@ -912,6 +1078,7 @@ class PlayButtonLaunchHook {
         });
     }
     patchSteamClient() {
+        this.registerSteamPopupHooks();
         const apps = window.SteamClient?.Apps;
         if (!apps || apps === this.patchedApps) {
             return;
@@ -925,22 +1092,23 @@ class PlayButtonLaunchHook {
         ].forEach((methodName) => this.patchSteamMethod(apps, methodName));
     }
     patchSteamMethod(apps, methodName) {
-        const original = apps[methodName];
-        if (typeof original !== "function") {
+        const current = apps[methodName];
+        if (typeof current !== "function") {
             return;
         }
-        const originalFn = original;
+        const originalFn = current.__playhubLaunchCurtainOriginal || current;
         const wrapped = function (...args) {
-            playButtonHook.showInstantLaunchSurface();
             const appId = playButtonHook.extractAppIdFromUnknown(args);
+            playButtonHook.showInstantLaunchSurface(appId);
             playButtonHook.trigger(`SteamClient.Apps.${methodName}`, appId, undefined, true, methodName === "RunShortcut");
             return originalFn.apply(this, args);
         };
+        wrapped.__playhubLaunchCurtainOriginal = originalFn;
         try {
             apps[methodName] = wrapped;
             this.methodRestorers.push(() => {
                 if (apps[methodName] === wrapped) {
-                    apps[methodName] = original;
+                    apps[methodName] = originalFn;
                 }
             });
         }
@@ -974,15 +1142,71 @@ class PlayButtonLaunchHook {
             }
             catch (_error) {}
             try { push(root?.Router?.WindowStore?.GamepadUIMainWindowInstance?.BrowserWindow); } catch (_error) {}
+            try {
+                const manager = root?.g_PopupManager;
+                const popups = Array.from(manager?.GetPopups?.() ?? manager?.m_mapPopups?.values?.() ?? []);
+                popups.forEach((entry) => {
+                    push(entry?.m_popup);
+                    push(entry?.m_popup?.window);
+                    push(entry?.m_element?.ownerDocument);
+                });
+            }
+            catch (_error) {}
         }
         try { push(document); } catch (_error) {}
         try { push(window); } catch (_error) {}
         return docs;
     }
+    registerSteamPopupHooks() {
+        const manager = globalThis.g_PopupManager;
+        if (!manager) {
+            return;
+        }
+        if (!this.popupCreatedRegistration && typeof manager.AddPopupCreatedCallback === "function") {
+            this.popupCreatedRegistration = manager.AddPopupCreatedCallback(() => {
+                window.setTimeout(() => {
+                    this.ensureInstantCurtainPrepared();
+                    if (this.instantCurtainVisible) {
+                        this.syncModernCurtainSurfaces();
+                    }
+                }, 0);
+            });
+        }
+        if (!this.popupDestroyedRegistration && typeof manager.AddPopupDestroyedCallback === "function") {
+            this.popupDestroyedRegistration = manager.AddPopupDestroyedCallback(() => {
+                window.setTimeout(() => this.ensureInstantCurtainPrepared(), 0);
+            });
+        }
+    }
+    releaseSteamPopupRegistration(registration) {
+        try {
+            if (typeof registration === "function") {
+                registration();
+            }
+            else {
+                registration?.Unregister?.();
+                registration?.unregister?.();
+                registration?.Dispose?.();
+                registration?.dispose?.();
+            }
+        }
+        catch (_error) {}
+    }
+    unregisterSteamPopupHooks() {
+        this.releaseSteamPopupRegistration(this.popupCreatedRegistration);
+        this.releaseSteamPopupRegistration(this.popupDestroyedRegistration);
+        this.popupCreatedRegistration = undefined;
+        this.popupDestroyedRegistration = undefined;
+    }
     createInstantCurtain(doc) {
         const curtain = doc.createElement("div");
         curtain.className = "launch-curtain-instant";
         curtain.setAttribute("data-launch-curtain-surface", "true");
+        curtain.setAttribute("data-launch-curtain-owner", this.instanceId);
+        curtain.style.display = "none";
+        curtain.style.visibility = "hidden";
+        curtain.style.opacity = "0";
+        curtain.style.pointerEvents = "none";
         curtain.innerHTML = `
       <style>
         .launch-curtain-cursor-hidden,
@@ -993,7 +1217,7 @@ class PlayButtonLaunchHook {
           position: fixed;
           inset: 0;
           z-index: 2147483647;
-          display: flex;
+          display: none;
           align-items: center;
           justify-content: center;
           background: #000;
@@ -1094,29 +1318,22 @@ class PlayButtonLaunchHook {
         try {
             doc.addEventListener("keydown", this.handleKeyDown, true);
             doc.addEventListener("keyup", this.handleKeyClose, true);
-            this.instantCurtainKeyDocuments.add(doc);
-        }
-        catch (_error) {}
-        try {
-            const Observer = doc.defaultView?.MutationObserver ?? globalThis.MutationObserver;
-            if (Observer) {
-                const observer = new Observer(() => {
-                    try {
-                        if (this.instantCurtainVisible && curtain.isConnected && doc.documentElement?.lastElementChild !== curtain) {
-                            doc.documentElement.appendChild(curtain);
-                        }
-                    }
-                    catch (_error) {}
-                });
-                observer.observe(doc.documentElement, { childList: true });
-                this.instantCurtainObserversByDocument.set(doc, observer);
+            if (doc !== document) {
+                doc.addEventListener("pointerdown", this.handlePointerDown, true);
+                doc.addEventListener("mousedown", this.handleMouseDown, true);
+                doc.addEventListener("touchstart", this.handleTouchStart, true);
+                doc.addEventListener("pointerover", this.handlePointerOver, true);
+                doc.addEventListener("focusin", this.handleFocusIn, true);
+                doc.addEventListener("click", this.handleClick, true);
             }
+            this.instantCurtainKeyDocuments.add(doc);
         }
         catch (_error) {}
         this.wireInstantLogoFallback(curtain);
         if (this.instantCurtainVisible) {
             doc.documentElement.classList.add("launch-curtain-cursor-hidden");
             curtain.style.transition = "none";
+            curtain.style.display = "flex";
             curtain.style.visibility = "visible";
             curtain.style.opacity = "1";
         }
@@ -1128,19 +1345,34 @@ class PlayButtonLaunchHook {
                 try { this.instantCurtainObserversByDocument.get(doc)?.disconnect?.(); } catch (_error) {}
                 try { doc.removeEventListener("keydown", this.handleKeyDown, true); } catch (_error) {}
                 try { doc.removeEventListener("keyup", this.handleKeyClose, true); } catch (_error) {}
+                try { doc.removeEventListener("pointerdown", this.handlePointerDown, true); } catch (_error) {}
+                try { doc.removeEventListener("mousedown", this.handleMouseDown, true); } catch (_error) {}
+                try { doc.removeEventListener("touchstart", this.handleTouchStart, true); } catch (_error) {}
+                try { doc.removeEventListener("pointerover", this.handlePointerOver, true); } catch (_error) {}
+                try { doc.removeEventListener("focusin", this.handleFocusIn, true); } catch (_error) {}
+                try { doc.removeEventListener("click", this.handleClick, true); } catch (_error) {}
                 this.instantCurtainKeyDocuments.delete(doc);
                 this.instantCurtainObserversByDocument.delete(doc);
                 try { curtain?.remove?.(); } catch (_error) {}
                 this.instantCurtainElementsByDocument.delete(doc);
             }
-            else if (this.instantCurtainVisible && doc.documentElement.lastElementChild !== curtain) {
-                try { doc.documentElement.appendChild(curtain); } catch (_error) {}
-            }
         }
         for (const doc of this.getAllSteamDocuments()) {
             const existing = this.instantCurtainElementsByDocument.get(doc);
-            if (existing?.isConnected) continue;
             try {
+                for (const stale of Array.from(doc.querySelectorAll('[data-launch-curtain-surface="true"]'))) {
+                    if (stale === existing && stale.getAttribute("data-launch-curtain-owner") === this.instanceId) {
+                        continue;
+                    }
+                    stale.style.display = "none";
+                    stale.style.visibility = "hidden";
+                    stale.style.opacity = "0";
+                    stale.remove();
+                }
+                if (existing?.isConnected) {
+                    continue;
+                }
+                doc.documentElement.classList.remove("launch-curtain-cursor-hidden");
                 this.instantCurtainElementsByDocument.set(doc, this.createInstantCurtain(doc));
             }
             catch (error) {
@@ -1243,7 +1475,18 @@ class PlayButtonLaunchHook {
         this.stopArmPoll();
         const poll = () => {
             void getStatus().then((st) => {
+                const wasGameRunning = this.gameRunning;
                 this.gameRunning = !!(st && st.game_running);
+                if (wasGameRunning && !this.gameRunning) {
+                    this.suppressPrearmUntil = Date.now() + 8000;
+                    if (this.instantCurtainVisible) {
+                        this.hideInstantCurtain(true);
+                    }
+                    else {
+                        this.clearInstantArtwork();
+                    }
+                    this.dbg("game exit observed: cleared prepared artwork");
+                }
             }).catch(() => {});
             this.armPollTimer = window.setTimeout(poll, 2000);
         };
@@ -1286,6 +1529,11 @@ class PlayButtonLaunchHook {
             const safeOpacity = Math.max(0, Math.min(1, Number(opacity) || 0));
             img.style.setProperty("--lc-backdrop-opacity", resolvedUrl ? String(safeOpacity) : "0");
             if (resolvedUrl) {
+                // clearInstantArtwork() hard-hides the previous frame. Restore CSS
+                // control before arming the next image, otherwise inline opacity
+                // keeps every later backdrop invisible while the logo still shows.
+                img.style.removeProperty("opacity");
+                img.style.removeProperty("transition");
                 if (img.getAttribute("src") !== resolvedUrl) {
                     img.addEventListener("load", () => {
                         if (this.instantCurtainVisible) {
@@ -1447,6 +1695,10 @@ class PlayButtonLaunchHook {
         if (this.instantCurtainTimer !== undefined) {
             window.clearTimeout(this.instantCurtainTimer);
         }
+        if (this.instantCurtainSafetyTimer !== undefined) {
+            window.clearTimeout(this.instantCurtainSafetyTimer);
+            this.instantCurtainSafetyTimer = undefined;
+        }
         if (this.instantCurtainTransitionFrame !== undefined) {
             window.cancelAnimationFrame(this.instantCurtainTransitionFrame);
             this.instantCurtainTransitionFrame = undefined;
@@ -1463,6 +1715,7 @@ class PlayButtonLaunchHook {
             curtain.ownerDocument?.documentElement?.classList?.add("launch-curtain-cursor-hidden");
             curtain.classList.remove("launch-curtain-instant--art-visible");
             curtain.style.transition = "none";
+            curtain.style.display = "flex";
             curtain.style.visibility = "visible";
             curtain.style.opacity = "1";
             curtain.getBoundingClientRect();
@@ -1480,8 +1733,19 @@ class PlayButtonLaunchHook {
         });
         if (this.isModernMode()) {
             this.instantCurtainExpiresAt = 0;
+            this.instantCurtainSafetyTimer = window.setTimeout(() => {
+                this.instantCurtainSafetyTimer = undefined;
+                if (!this.instantCurtainVisible) {
+                    return;
+                }
+                this.dbg("fail-open watchdog released a stale modern curtain");
+                this.requestCloseAllCurtains();
+            }, MODERN_FAIL_OPEN_MS);
             this.startGamepadClosePolling();
             this.startModernHandoffPoll();
+        }
+        if (this.postPlayCoverUntil > Date.now()) {
+            this.startPromptWatch();
         }
         else {
             const safeDurationMs = Math.max(600, Math.min(4200, Number(durationMs) || PROBATION_COVER_MS));
@@ -1495,13 +1759,48 @@ class PlayButtonLaunchHook {
             this.hideInstantCurtain();
         }
     }
-    hideInstantCurtain() {
+    clearInstantArtwork() {
+        this.backdropPreviewToken += 1;
+        this.logoPreviewToken += 1;
+        this.currentBackdropAppId = undefined;
+        this.currentBackdropSource = "";
+        this.currentBackdropResolvedUrl = "";
+        this.currentBackdropOpacity = 0;
+        this.activeInstantAppId = undefined;
+        this.prearmedInstantAppId = undefined;
+        for (const curtain of Array.from(this.instantCurtainElementsByDocument.values()).filter((item) => item?.isConnected)) {
+            try {
+                curtain.style.display = "none";
+                curtain.style.visibility = "hidden";
+                curtain.style.opacity = "0";
+                curtain.ownerDocument?.documentElement?.classList?.remove("launch-curtain-cursor-hidden");
+                curtain.classList.remove("launch-curtain-instant--art-visible");
+                const backdrop = curtain.querySelector(".launch-curtain-instant__backdrop");
+                if (backdrop) {
+                    backdrop.style.transition = "none";
+                    backdrop.style.opacity = "0";
+                    backdrop.removeAttribute("src");
+                    backdrop.classList.remove("launch-curtain-instant__backdrop--zoom");
+                    delete backdrop.dataset.lcAnimationEpoch;
+                }
+            }
+            catch (_error) {}
+        }
+        this.setInstantCurtainLogo("", false);
+    }
+    hideInstantCurtain(clearArtworkImmediately = false) {
+        if (this.instantCurtainSafetyTimer !== undefined) {
+            window.clearTimeout(this.instantCurtainSafetyTimer);
+            this.instantCurtainSafetyTimer = undefined;
+        }
         if (this.instantCurtainTimer !== undefined) {
             window.clearTimeout(this.instantCurtainTimer);
             this.instantCurtainTimer = undefined;
         }
         this.stopGamepadClosePolling();
         this.stopModernHandoffPoll();
+        this.stopPromptWatch();
+        this.promptSuspended = false;
         if (this.instantCurtainTransitionFrame !== undefined) {
             window.cancelAnimationFrame(this.instantCurtainTransitionFrame);
             this.instantCurtainTransitionFrame = undefined;
@@ -1531,6 +1830,9 @@ class PlayButtonLaunchHook {
             curtain.style.transition = "";
             if (!modernHide) curtain.style.opacity = "0";
         }
+        if (clearArtworkImmediately) {
+            this.clearInstantArtwork();
+        }
         if (modernHide) {
             // Transizione morbida curtain->gioco: i contenuti sfumano verso il NERO, breve
             // tenuta sul nero, poi il nero sfuma (a quel punto il gioco e' gia' in primo piano).
@@ -1545,12 +1847,17 @@ class PlayButtonLaunchHook {
             }
             curtains.forEach((curtain) => {
                 curtain.style.visibility = "hidden";
+                curtain.style.display = "none";
                 curtain.ownerDocument?.documentElement?.classList?.remove("launch-curtain-cursor-hidden");
             });
-            this.refreshPreparedFallback();
+            this.clearInstantArtwork();
         }, modernHide ? 1320 : 760);
     }
     destroyInstantCurtain() {
+        if (this.instantCurtainSafetyTimer !== undefined) {
+            window.clearTimeout(this.instantCurtainSafetyTimer);
+            this.instantCurtainSafetyTimer = undefined;
+        }
         if (this.instantCurtainTimer !== undefined) {
             window.clearTimeout(this.instantCurtainTimer);
             this.instantCurtainTimer = undefined;
@@ -1568,6 +1875,12 @@ class PlayButtonLaunchHook {
             try { this.instantCurtainObserversByDocument.get(doc)?.disconnect?.(); } catch (_error) {}
             try { doc.removeEventListener("keydown", this.handleKeyDown, true); } catch (_error) {}
             try { doc.removeEventListener("keyup", this.handleKeyClose, true); } catch (_error) {}
+            try { doc.removeEventListener("pointerdown", this.handlePointerDown, true); } catch (_error) {}
+            try { doc.removeEventListener("mousedown", this.handleMouseDown, true); } catch (_error) {}
+            try { doc.removeEventListener("touchstart", this.handleTouchStart, true); } catch (_error) {}
+            try { doc.removeEventListener("pointerover", this.handlePointerOver, true); } catch (_error) {}
+            try { doc.removeEventListener("focusin", this.handleFocusIn, true); } catch (_error) {}
+            try { doc.removeEventListener("click", this.handleClick, true); } catch (_error) {}
             try { doc.documentElement?.classList?.remove("launch-curtain-cursor-hidden"); } catch (_error) {}
             try { curtain?.remove?.(); } catch (_error) {}
         }
@@ -1576,6 +1889,7 @@ class PlayButtonLaunchHook {
         this.instantCurtainElementsByDocument.clear();
         this.instantCurtainElement = undefined;
         this.instantCurtainVisible = false;
+        this.promptSuspended = false;
         this.activeInstantAppId = undefined;
         this.prearmedInstantAppId = undefined;
         this.prearmLogoToken += 1;
@@ -1701,37 +2015,191 @@ class PlayButtonLaunchHook {
         });
     }
     currentFocusedPlayButton() {
-        const active = document.activeElement;
-        if (active instanceof HTMLElement && this.isPlayButtonEvent(active, [])) {
-            return active;
-        }
-        if (active instanceof HTMLElement) {
-            let parent = active.parentElement;
-            for (let depth = 0; parent && depth < 5; depth += 1) {
-                if (this.isPlayButtonEvent(parent, [])) {
-                    return parent;
+        for (const doc of this.getAllSteamDocuments()) {
+            const active = doc.activeElement;
+            if (this.isElementNode(active) && this.isPlayButtonEvent(active, [])) {
+                return active;
+            }
+            if (this.isElementNode(active)) {
+                let parent = active.parentElement;
+                for (let depth = 0; parent && depth < 5; depth += 1) {
+                    if (this.isPlayButtonEvent(parent, [])) {
+                        return parent;
+                    }
+                    parent = parent.parentElement;
                 }
-                parent = parent.parentElement;
             }
         }
         return undefined;
     }
+    visibleSteamAttentionPrompt() {
+        const selector = this.postPlayPromptSelector();
+        for (const doc of this.getAllSteamDocuments()) {
+            let prompts = [];
+            try {
+                prompts = Array.from(doc.querySelectorAll(selector));
+            }
+            catch (_error) {
+                continue;
+            }
+            for (const prompt of prompts) {
+                if (!this.isElementNode(prompt) || prompt.closest?.("[data-launch-curtain-surface='true']")) {
+                    continue;
+                }
+                const rect = prompt.getBoundingClientRect();
+                const style = doc.defaultView?.getComputedStyle?.(prompt);
+                if (
+                    rect.width < 260
+                    || rect.height < 100
+                    || style?.display === "none"
+                    || style?.visibility === "hidden"
+                    || Number(style?.opacity ?? "1") <= 0.01
+                ) {
+                    continue;
+                }
+                const actions = Array.from(prompt.querySelectorAll('button, [role="button"], [role="menuitem"], [role="option"], [data-focusable="true"]'))
+                    .filter((item) => {
+                        const actionRect = item.getBoundingClientRect();
+                        const actionStyle = doc.defaultView?.getComputedStyle?.(item);
+                        return actionRect.width > 24
+                            && actionRect.height > 20
+                            && actionStyle?.display !== "none"
+                            && actionStyle?.visibility !== "hidden";
+                    });
+                if (actions.length <= 0 || actions.length > 10) {
+                    continue;
+                }
+                const text = (prompt.innerText || prompt.textContent || "").replace(/\s+/g, " ").trim();
+                const labels = actions.flatMap((item) => this.getLabels(item)).join(" ");
+                if (POST_PLAY_CONFIRM_PATTERN.test(`${text} ${labels}`) || (text.length >= 10 && text.length <= 1800 && actions.length <= 4)) {
+                    return { prompt, actions, doc };
+                }
+            }
+        }
+        return undefined;
+    }
+    currentFocusedPostPlayConfirm() {
+        const attention = this.visibleSteamAttentionPrompt();
+        if (!attention) {
+            return undefined;
+        }
+        const active = attention.doc.activeElement;
+        if (this.isElementNode(active) && attention.prompt.contains(active)) {
+            return active;
+        }
+        return attention.actions.find((item) => item.matches?.(":focus, .gpfocus, [data-gpfocus]"))
+            || attention.actions[0];
+    }
+    suspendInstantCurtainForPrompt() {
+        if (!this.instantCurtainVisible || this.promptSuspended) {
+            return;
+        }
+        this.promptSuspended = true;
+        if (this.instantCurtainSafetyTimer !== undefined) {
+            window.clearTimeout(this.instantCurtainSafetyTimer);
+            this.instantCurtainSafetyTimer = undefined;
+        }
+        this.postPlayCoverUntil = Math.max(this.postPlayCoverUntil, Date.now() + POST_PLAY_PROMPT_HOLD_MS);
+        this.instantCurtainVisible = false;
+        this.stopGamepadClosePolling();
+        this.stopModernHandoffPoll();
+        if (this.instantCurtainTimer !== undefined) {
+            window.clearTimeout(this.instantCurtainTimer);
+            this.instantCurtainTimer = undefined;
+        }
+        if (this.instantCurtainTransitionFrame !== undefined) {
+            window.cancelAnimationFrame(this.instantCurtainTransitionFrame);
+            this.instantCurtainTransitionFrame = undefined;
+        }
+        for (const curtain of this.instantCurtains()) {
+            curtain.classList.remove("launch-curtain-instant--art-visible");
+            curtain.style.transition = "none";
+            curtain.style.opacity = "0";
+            curtain.style.visibility = "hidden";
+            curtain.style.display = "none";
+            curtain.ownerDocument?.documentElement?.classList?.remove("launch-curtain-cursor-hidden");
+        }
+        void hideBlackCover().catch(() => {});
+        void setNativePromptVisible({ visible: true }).catch((error) => {
+            console.warn("Launch Curtain could not release focus for the Steam prompt", error);
+        });
+        this.dbg("native Steam attention prompt revealed");
+    }
+    startPromptWatch() {
+        if (this.promptWatchTimer !== undefined) {
+            return;
+        }
+        const poll = () => {
+            this.promptWatchTimer = undefined;
+            if (!this.setupDone) {
+                return;
+            }
+            const attention = this.visibleSteamAttentionPrompt();
+            if (this.promptSuspended && attention) {
+                this.postPlayCoverUntil = Date.now() + POST_PLAY_PROMPT_HOLD_MS;
+            }
+            if (Date.now() > this.postPlayCoverUntil && !this.promptSuspended) {
+                return;
+            }
+            if (this.instantCurtainVisible && attention) {
+                this.suspendInstantCurtainForPrompt();
+            }
+            else if (this.promptSuspended && !attention) {
+                this.dbg("Steam attention prompt dismissed without a launch selection");
+                this.requestCloseAllCurtains();
+                return;
+            }
+            this.promptWatchTimer = window.setTimeout(poll, 120);
+        };
+        this.promptWatchTimer = window.setTimeout(poll, 120);
+    }
+    stopPromptWatch() {
+        if (this.promptWatchTimer !== undefined) {
+            window.clearTimeout(this.promptWatchTimer);
+            this.promptWatchTimer = undefined;
+        }
+    }
     startGamepadLaunchPolling() {
         this.stopGamepadLaunchPolling();
         this.gamepadLaunchPressed = this.gamepadButtonPressed([0]);
+        const initialPlayButton = this.gamepadLaunchPressed ? undefined : this.currentFocusedPlayButton();
+        this.gamepadLaunchArmedButton = initialPlayButton;
+        this.gamepadLaunchArmedAppId = initialPlayButton
+            ? this.findAppIdForEvent(initialPlayButton, this.parentPath(initialPlayButton))
+            : undefined;
         const poll = () => {
             if (!this.setupDone) {
                 return;
             }
             const confirmPressed = this.gamepadButtonPressed([0]);
+            const focusedPlayButton = this.currentFocusedPlayButton();
+            const focusedPlayAppId = focusedPlayButton
+                ? this.findAppIdForEvent(focusedPlayButton, this.parentPath(focusedPlayButton))
+                : undefined;
             if (this.enabled && confirmPressed && !this.gamepadLaunchPressed && !this.instantCurtainVisible) {
-                const focusedPlayButton = this.currentFocusedPlayButton();
-                if (focusedPlayButton) {
+                const wasPlayFocusedBeforePress = Boolean(
+                    focusedPlayButton
+                    && this.gamepadLaunchArmedButton
+                    && (
+                        (focusedPlayAppId && this.gamepadLaunchArmedAppId
+                            ? focusedPlayAppId === this.gamepadLaunchArmedAppId
+                            : focusedPlayButton === this.gamepadLaunchArmedButton)
+                    )
+                );
+                if (focusedPlayButton && wasPlayFocusedBeforePress) {
                     this.handleLaunchInput("play button gamepad", focusedPlayButton, this.parentPath(focusedPlayButton));
                 }
-                else {
-                    this.coverPostPlayInteraction("post-play gamepad", document.activeElement, []);
+                else if (!focusedPlayButton) {
+                    const confirmTarget = this.currentFocusedPostPlayConfirm() || document.activeElement;
+                    const confirmPath = this.parentPath(confirmTarget);
+                    if (!this.cancelPostPlayInteraction("post-play gamepad", confirmTarget, confirmPath)) {
+                        this.coverPostPlayInteraction("post-play gamepad", confirmTarget, confirmPath);
+                    }
                 }
+            }
+            if (!confirmPressed) {
+                this.gamepadLaunchArmedButton = focusedPlayButton;
+                this.gamepadLaunchArmedAppId = focusedPlayAppId;
             }
             this.gamepadLaunchPressed = confirmPressed;
             this.gamepadLaunchTimer = window.setTimeout(poll, 50);
@@ -1744,6 +2212,8 @@ class PlayButtonLaunchHook {
             this.gamepadLaunchTimer = undefined;
         }
         this.gamepadLaunchPressed = false;
+        this.gamepadLaunchArmedButton = undefined;
+        this.gamepadLaunchArmedAppId = undefined;
     }
     startGamepadClosePolling() {
         this.stopGamepadClosePolling();
@@ -1752,6 +2222,7 @@ class PlayButtonLaunchHook {
         this.gamepadCloseOverlayRunning = false;
         this.gamepadCloseStatusCheckedAt = 0;
         this.gamepadCloseIdleSince = 0;
+        this.gamepadClosePending = false;
         const poll = () => {
             const now = Date.now();
             if (now - this.gamepadCloseStatusCheckedAt >= 350) {
@@ -1774,6 +2245,11 @@ class PlayButtonLaunchHook {
             }
             const closePressed = this.gamepadButtonPressed([1]);
             if (closeSurfaceActive && closePressed && !this.gamepadClosePressed && now >= this.gamepadCloseIgnoreUntil) {
+                this.gamepadClosePending = true;
+            }
+            if (this.gamepadClosePending && !closePressed && this.gamepadClosePressed) {
+                this.gamepadClosePending = false;
+                this.dismissInputSuppressionUntil = now + 900;
                 this.requestCloseAllCurtains();
                 return;
             }
@@ -1792,11 +2268,16 @@ class PlayButtonLaunchHook {
         this.gamepadCloseOverlayRunning = false;
         this.gamepadCloseStatusCheckedAt = 0;
         this.gamepadCloseIdleSince = 0;
+        this.gamepadClosePending = false;
     }
     requestCloseAllCurtains() {
+        this.dismissInputSuppressionUntil = Math.max(this.dismissInputSuppressionUntil, Date.now() + 900);
         this.postPlayCoverUntil = 0;
         this.postPlayCoverReadyAt = 0;
-        this.hideInstantCurtain();
+        this.stopPromptWatch();
+        this.promptSuspended = false;
+        void setNativePromptVisible({ visible: false }).catch(() => {});
+        this.hideInstantCurtain(true);
         void hideBlackCover().catch((error) => {
             console.warn("Launch Curtain black pre-cover close failed", error);
         });

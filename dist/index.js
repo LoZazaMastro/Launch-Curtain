@@ -88,33 +88,41 @@ function FaTheaterMasks (props) {
 }
 
 
+
 function FaDownload (props) {
   return GenIcon({"tag":"svg","attr":{"viewBox":"0 0 512 512"},"child":[{"tag":"path","attr":{"d":"M216 0h80c13.3 0 24 10.7 24 24v168h87.7c17.8 0 26.7 21.5 14.1 34.1L269.7 378.3c-7.5 7.5-19.8 7.5-27.3 0L90.1 226.1c-12.6-12.6-3.7-34.1 14.1-34.1H192V24c0-13.3 10.7-24 24-24zm296 376v112c0 13.3-10.7 24-24 24H24c-13.3 0-24-10.7-24-24V376c0-13.3 10.7-24 24-24h146.7l49 49c20.1 20.1 52.5 20.1 72.6 0l49-49H488c13.3 0 24 10.7 24 24zm-124 88c0-11-9-20-20-20s-20 9-20 20 9 20 20 20 20-9 20-20zm64 0c0-11-9-20-20-20s-20 9-20 20 9 20 20 20 20-9 20-20z"},"child":[]}]})(props);
 };
+
 
 function FaFolderOpen (props) {
   return GenIcon({"tag":"svg","attr":{"viewBox":"0 0 576 512"},"child":[{"tag":"path","attr":{"d":"M572.694 292.093L500.27 416.248A63.997 63.997 0 0 1 444.989 448H45.025c-18.523 0-30.064-20.093-20.731-36.093l72.424-124.155A64 64 0 0 1 152 256h399.964c18.523 0 30.064 20.093 20.73 36.093zM152 224h328v-48c0-26.51-21.49-48-48-48H272l-64-64H48C21.49 64 0 85.49 0 112v278.046l69.077-118.418C86.214 242.25 117.989 224 152 224z"},"child":[]}]})(props);
 };
 
+
 function FaImage (props) {
   return GenIcon({"tag":"svg","attr":{"viewBox":"0 0 512 512"},"child":[{"tag":"path","attr":{"d":"M464 448H48c-26.51 0-48-21.49-48-48V112c0-26.51 21.49-48 48-48h416c26.51 0 48 21.49 48 48v288c0 26.51-21.49 48-48 48zM112 120c-30.928 0-56 25.072-56 56s25.072 56 56 56 56-25.072 56-56-25.072-56-56-56zM64 384h384V272l-87.515-87.515c-4.686-4.686-12.284-4.686-16.971 0L208 320l-55.515-55.515c-4.686-4.686-12.284-4.686-16.971 0L64 336v48z"},"child":[]}]})(props);
 };
+
 
 function FaRocket (props) {
   return GenIcon({"tag":"svg","attr":{"viewBox":"0 0 512 512"},"child":[{"tag":"path","attr":{"d":"M505.12019,19.09375c-1.18945-5.53125-6.65819-11-12.207-12.1875C460.716,0,435.507,0,410.40747,0,307.17523,0,245.26909,55.20312,199.05238,128H94.83772c-16.34763.01562-35.55658,11.875-42.88664,26.48438L2.51562,253.29688A28.4,28.4,0,0,0,0,264a24.00867,24.00867,0,0,0,24.00582,24H127.81618l-22.47457,22.46875c-11.36521,11.36133-12.99607,32.25781,0,45.25L156.24582,406.625c11.15623,11.1875,32.15619,13.15625,45.27726,0l22.47457-22.46875V488a24.00867,24.00867,0,0,0,24.00581,24,28.55934,28.55934,0,0,0,10.707-2.51562l98.72834-49.39063c14.62888-7.29687,26.50776-26.5,26.50776-42.85937V312.79688c72.59753-46.3125,128.03493-108.40626,128.03493-211.09376C512.07526,76.5,512.07526,51.29688,505.12019,19.09375ZM384.04033,168A40,40,0,1,1,424.05,128,40.02322,40.02322,0,0,1,384.04033,168Z"},"child":[]}]})(props);
 };
 
+
 function FaTools (props) {
   return GenIcon({"tag":"svg","attr":{"viewBox":"0 0 512 512"},"child":[{"tag":"path","attr":{"d":"M501.1 395.7L384 278.6c-23.1-23.1-57.6-27.6-85.4-13.9L192 158.1V96L64 0 0 64l96 128h62.1l106.6 106.6c-13.6 27.8-9.2 62.3 13.9 85.4l117.1 117.1c14.6 14.6 38.2 14.6 52.7 0l52.7-52.7c14.5-14.6 14.5-38.2 0-52.7zM331.7 225c28.3 0 54.9 11 74.9 31l19.4 19.4c15.8-6.9 30.8-16.5 43.8-29.5 37.1-37.1 49.7-89.3 37.9-136.7-2.2-9-13.5-12.1-20.1-5.5l-74.4 74.4-67.9-11.3L334 98.9l74.4-74.4c6.6-6.6 3.4-17.9-5.7-20.2-47.4-11.7-99.6.9-136.6 37.9-28.5 28.5-41.9 66.1-41.2 103.6l82.1 82.1c8.1-1.9 16.5-2.9 24.7-2.9zm-103.9 82l-56.7-56.7L18.7 402.8c-25 25-25 65.5 0 90.5s65.5 25 90.5 0l123.6-123.6c-7.6-19.9-9.9-41.6-5-62.7zM64 472c-13.2 0-24-10.8-24-24 0-13.3 10.7-24 24-24s24 10.7 24 24c0 13.2-10.7 24-24 24z"},"child":[]}]})(props);
 };
+
 
 function FaTrashAlt (props) {
   return GenIcon({"tag":"svg","attr":{"viewBox":"0 0 448 512"},"child":[{"tag":"path","attr":{"d":"M32 464a48 48 0 0 0 48 48h288a48 48 0 0 0 48-48V128H32zm272-256a16 16 0 0 1 32 0v224a16 16 0 0 1-32 0zm-96 0a16 16 0 0 1 32 0v224a16 16 0 0 1-32 0zm-96 0a16 16 0 0 1 32 0v224a16 16 0 0 1-32 0zM432 32H312l-9.4-18.7A24 24 0 0 0 281.1 0H166.8a23.72 23.72 0 0 0-21.4 13.3L136 32H16A16 16 0 0 0 0 48v32a16 16 0 0 0 16 16h416a16 16 0 0 0 16-16V48a16 16 0 0 0-16-16z"},"child":[]}]})(props);
 };
 
+
 function FaUndo (props) {
   return GenIcon({"tag":"svg","attr":{"viewBox":"0 0 512 512"},"child":[{"tag":"path","attr":{"d":"M212.333 224.333H12c-6.627 0-12-5.373-12-12V12C0 5.373 5.373 0 12 0h48c6.627 0 12 5.373 12 12v78.112C117.773 39.279 184.26 7.47 258.175 8.007c136.906.994 246.448 111.623 246.157 248.532C504.041 393.258 393.12 504 256.333 504c-64.089 0-122.496-24.313-166.51-64.215-5.099-4.622-5.334-12.554-.467-17.42l33.967-33.967c4.474-4.474 11.662-4.717 16.401-.525C170.76 415.336 211.58 432 256.333 432c97.268 0 176-78.716 176-176 0-97.267-78.716-176-176-176-58.496 0-110.28 28.476-142.274 72.333h98.274c6.627 0 12 5.373 12 12v48c0 6.627-5.373 12-12 12z"},"child":[]}]})(props);
 };
+
 
 
 // Callable esposte dal backend Python (main.py). Ricostruito dal dist.
@@ -125,6 +133,7 @@ const debugLog = callable("debug_log");
 const hideCurtain = callable("hide_curtain");
 const showBlackCover = callable("show_black_cover");
 const hideBlackCover = callable("hide_black_cover");
+const setNativePromptVisible = callable("set_native_prompt_visible");
 const launchRequested = callable("launch_requested");
 const resolveGameLogo = callable("resolve_game_logo");
 const getGameSettings = callable("get_game_settings");
@@ -478,6 +487,7 @@ const I18N = {
 const EXTRA_STRINGS = {
     en: {
         maintenance: "Maintenance", refreshGameCache: "Refresh game cache", deleteUnusedImages: "Delete unused images",
+        downloadPlayStationAssetsInstalled: "Download PS assets for installed games", noInstalledGames: "No installed Steam games were found.",
         downloadPlayStationAssets: "Download PlayStation assets", removePlayStationAssets: "Remove PlayStation assets", downloadingPlayStationAssets: "Downloading PlayStation assets", removingPlayStationAssets: "Removing PlayStation assets", playStationBulkApplied: "Applied", playStationBulkRemoved: "Removed", playStationBulkSkipped: "Skipped", playStationBulkFailed: "Failed", playStationBulkError: "The PlayStation bulk operation could not be completed",
         tabGame: "Game", tabAppearance: "Appearance", tabScrapers: "Scrapers",
         gameBehavior: "Launch Curtain behavior", gameBehaviorHelp: "Choose how Launch Curtain behaves for this game.", enableForGame: "Enable Launch Curtain for this game",
@@ -491,6 +501,7 @@ const EXTRA_STRINGS = {
     },
     it: {
         maintenance: "Manutenzione", refreshGameCache: "Aggiorna cache giochi", deleteUnusedImages: "Elimina immagini inutilizzate",
+        downloadPlayStationAssetsInstalled: "Scarica asset PS dei giochi installati", noInstalledGames: "Nessun gioco Steam installato trovato.",
         downloadPlayStationAssets: "Scarica asset PlayStation", removePlayStationAssets: "Rimuovi asset PlayStation", downloadingPlayStationAssets: "Download asset PlayStation", removingPlayStationAssets: "Rimozione asset PlayStation", playStationBulkApplied: "Applicati", playStationBulkRemoved: "Rimossi", playStationBulkSkipped: "Saltati", playStationBulkFailed: "Non riusciti", playStationBulkError: "Non è stato possibile completare l'operazione PlayStation",
         tabGame: "Gioco", tabAppearance: "Aspetto", tabScrapers: "Scraper",
         gameBehavior: "Comportamento di Launch Curtain", gameBehaviorHelp: "Scegli come deve comportarsi Launch Curtain con questo gioco.", enableForGame: "Attiva Launch Curtain per questo gioco",
@@ -508,6 +519,7 @@ const EXTRA_TRANSLATIONS = {
     fr: {
         timeoutEnabled: "Activer le délai d'expiration", modeAuto: "Automatique", forceMode: "Forcer le mode", gameTimeout: "Délai du jeu", gameTimeoutSeconds: "Délai du jeu (secondes)", timeoutHelp: "Masque automatiquement le rideau lorsque le délai expire.", timeoutDisabledHelp: "Le rideau reste affiché jusqu'à la détection du jeu.", exitDelay: "Délai de sortie", exitDelayHelp: "Maintient le rideau visible un peu plus longtemps après la détection du jeu.",
         maintenance: "Maintenance", refreshGameCache: "Actualiser le cache des jeux", deleteUnusedImages: "Supprimer les images inutilisées",
+        downloadPlayStationAssetsInstalled: "Télécharger les ressources PS des jeux installés", noInstalledGames: "Aucun jeu Steam installé n'a été trouvé.",
         downloadPlayStationAssets: "Télécharger les ressources PlayStation", removePlayStationAssets: "Supprimer les ressources PlayStation", downloadingPlayStationAssets: "Téléchargement des ressources PlayStation", removingPlayStationAssets: "Suppression des ressources PlayStation", playStationBulkApplied: "Appliquées", playStationBulkRemoved: "Supprimées", playStationBulkSkipped: "Ignorées", playStationBulkFailed: "Échecs", playStationBulkError: "L'opération groupée PlayStation n'a pas pu être terminée",
         tabGame: "Jeu", tabAppearance: "Apparence", tabScrapers: "Sources", gameBehavior: "Comportement de Launch Curtain", gameBehaviorHelp: "Choisissez le comportement de Launch Curtain pour ce jeu.", enableForGame: "Activer Launch Curtain pour ce jeu",
         logoHelp: "Gérez le logo du jeu et ouvrez l'éditeur visuel.", showLogo: "Afficher le logo", openEditor: "Ouvrir l'éditeur", logoZoom: "Activer l'animation de zoom avant du logo", bgZoom: "Activer l'animation de zoom arrière de l'arrière-plan",
@@ -520,7 +532,7 @@ const EXTRA_TRANSLATIONS = {
     },
     es: {
         timeoutEnabled: "Activar tiempo de espera", modeAuto: "Automático", forceMode: "Forzar modo", gameTimeout: "Tiempo de espera del juego", gameTimeoutSeconds: "Tiempo de espera del juego (segundos)", timeoutHelp: "Oculta automáticamente la cortina cuando se agota el tiempo.", timeoutDisabledHelp: "La cortina permanece visible hasta que se detecta el juego.", exitDelay: "Retraso de salida", exitDelayHelp: "Mantiene la cortina visible un poco más después de detectar el juego.",
-        maintenance: "Mantenimiento", refreshGameCache: "Actualizar caché de juegos", deleteUnusedImages: "Eliminar imágenes sin usar", downloadPlayStationAssets: "Descargar recursos de PlayStation", removePlayStationAssets: "Eliminar recursos de PlayStation", downloadingPlayStationAssets: "Descargando recursos de PlayStation", removingPlayStationAssets: "Eliminando recursos de PlayStation", playStationBulkApplied: "Aplicados", playStationBulkRemoved: "Eliminados", playStationBulkSkipped: "Omitidos", playStationBulkFailed: "Fallidos", playStationBulkError: "No se pudo completar la operación por lotes de PlayStation",
+        maintenance: "Mantenimiento", refreshGameCache: "Actualizar caché de juegos", deleteUnusedImages: "Eliminar imágenes sin usar", downloadPlayStationAssetsInstalled: "Descargar recursos de PS para juegos instalados", noInstalledGames: "No se encontraron juegos de Steam instalados.", downloadPlayStationAssets: "Descargar recursos de PlayStation", removePlayStationAssets: "Eliminar recursos de PlayStation", downloadingPlayStationAssets: "Descargando recursos de PlayStation", removingPlayStationAssets: "Eliminando recursos de PlayStation", playStationBulkApplied: "Aplicados", playStationBulkRemoved: "Eliminados", playStationBulkSkipped: "Omitidos", playStationBulkFailed: "Fallidos", playStationBulkError: "No se pudo completar la operación por lotes de PlayStation",
         tabGame: "Juego", tabAppearance: "Apariencia", tabScrapers: "Fuentes", gameBehavior: "Comportamiento de Launch Curtain", gameBehaviorHelp: "Elige cómo se comportará Launch Curtain con este juego.", enableForGame: "Activar Launch Curtain para este juego", logoHelp: "Controla el logotipo del juego y abre el editor visual.", showLogo: "Mostrar logotipo", openEditor: "Abrir editor", logoZoom: "Activar animación de acercamiento del logotipo", bgZoom: "Activar animación de alejamiento del fondo",
         launchImage: "Imagen de inicio", noLaunchImage: "No hay ninguna imagen de inicio seleccionada", chooseLaunchImage: "Elegir imagen de inicio a pantalla completa", clearLaunchImage: "Quitar imagen de inicio", editorTitle: "Editor", close: "Cerrar", saving: "Guardando...", editorSaveFailed: "No se pudieron guardar los ajustes del editor.", backgroundOpacity: "Opacidad del fondo", logoShadowOpacity: "Opacidad de la sombra del logotipo", logoShadowBlur: "Desenfoque de la sombra del logotipo", up: "Arriba", down: "Abajo", left: "Izquierda", right: "Derecha", reset: "Restablecer", smaller: "Más pequeño", bigger: "Más grande", cancel: "Cancelar", save: "Guardar",
         downloadBackgrounds: "Descargar fondos", scrapers: "Fuentes de fondos", scrapersHelp: "Elige una fuente, busca el juego y selecciona un fondo.", searchQuery: "Texto de búsqueda", search: "Buscar", searching: "Buscando...", download: "Descargar", searchPlayStation: "Buscar en PlayStation Store", searchingPlayStation: "Buscando en PlayStation Store...", choosePlayStationGame: "Elige el juego de PlayStation correspondiente.", playStationGame: "Juego de PlayStation", viewBackgrounds: "Ver fondos", loading: "Cargando...", backToResults: "Volver a los resultados", readingBackgrounds: "Leyendo fondos para", chooseBackground: "Elige un fondo de PlayStation.", noBackgrounds: "No se encontraron fondos adecuados.", noPlayStationGames: "No se encontraron juegos en PlayStation Store.",
@@ -528,7 +540,7 @@ const EXTRA_TRANSLATIONS = {
     },
     de: {
         timeoutEnabled: "Zeitlimit aktivieren", modeAuto: "Automatisch", forceMode: "Modus erzwingen", gameTimeout: "Spiel-Zeitlimit", gameTimeoutSeconds: "Spiel-Zeitlimit (Sekunden)", timeoutHelp: "Blendet den Vorhang nach Ablauf des Zeitlimits automatisch aus.", timeoutDisabledHelp: "Der Vorhang bleibt sichtbar, bis das Spiel erkannt wird.", exitDelay: "Ausblendverzögerung", exitDelayHelp: "Lässt den Vorhang nach der Spielerkennung etwas länger sichtbar.",
-        maintenance: "Wartung", refreshGameCache: "Spiele-Cache aktualisieren", deleteUnusedImages: "Ungenutzte Bilder löschen", downloadPlayStationAssets: "PlayStation-Assets herunterladen", removePlayStationAssets: "PlayStation-Assets entfernen", downloadingPlayStationAssets: "PlayStation-Assets werden heruntergeladen", removingPlayStationAssets: "PlayStation-Assets werden entfernt", playStationBulkApplied: "Angewendet", playStationBulkRemoved: "Entfernt", playStationBulkSkipped: "Übersprungen", playStationBulkFailed: "Fehlgeschlagen", playStationBulkError: "Der PlayStation-Sammelvorgang konnte nicht abgeschlossen werden",
+        maintenance: "Wartung", refreshGameCache: "Spiele-Cache aktualisieren", deleteUnusedImages: "Ungenutzte Bilder löschen", downloadPlayStationAssetsInstalled: "PS-Assets für installierte Spiele laden", noInstalledGames: "Keine installierten Steam-Spiele gefunden.", downloadPlayStationAssets: "PlayStation-Assets herunterladen", removePlayStationAssets: "PlayStation-Assets entfernen", downloadingPlayStationAssets: "PlayStation-Assets werden heruntergeladen", removingPlayStationAssets: "PlayStation-Assets werden entfernt", playStationBulkApplied: "Angewendet", playStationBulkRemoved: "Entfernt", playStationBulkSkipped: "Übersprungen", playStationBulkFailed: "Fehlgeschlagen", playStationBulkError: "Der PlayStation-Sammelvorgang konnte nicht abgeschlossen werden",
         tabGame: "Spiel", tabAppearance: "Darstellung", tabScrapers: "Quellen", gameBehavior: "Verhalten von Launch Curtain", gameBehaviorHelp: "Lege fest, wie sich Launch Curtain bei diesem Spiel verhält.", enableForGame: "Launch Curtain für dieses Spiel aktivieren", logoHelp: "Verwalte das Spiellogo und öffne den visuellen Editor.", showLogo: "Logo anzeigen", openEditor: "Editor öffnen", logoZoom: "Einzoom-Animation des Logos aktivieren", bgZoom: "Auszoom-Animation des Hintergrunds aktivieren",
         launchImage: "Startbild", noLaunchImage: "Kein Startbild ausgewählt", chooseLaunchImage: "Vollbild-Startbild auswählen", clearLaunchImage: "Startbild entfernen", editorTitle: "Editor", close: "Schließen", saving: "Speichern...", editorSaveFailed: "Die Editor-Einstellungen konnten nicht gespeichert werden.", backgroundOpacity: "Hintergrunddeckkraft", logoShadowOpacity: "Deckkraft des Logoschattens", logoShadowBlur: "Unschärfe des Logoschattens", up: "Oben", down: "Unten", left: "Links", right: "Rechts", reset: "Zurücksetzen", smaller: "Kleiner", bigger: "Größer", cancel: "Abbrechen", save: "Speichern",
         downloadBackgrounds: "Hintergründe herunterladen", scrapers: "Hintergrundquellen", scrapersHelp: "Wähle eine Quelle, suche nach dem Spiel und wähle anschließend einen Hintergrund.", searchQuery: "Suchbegriff", search: "Suchen", searching: "Suche...", download: "Herunterladen", searchPlayStation: "Im PlayStation Store suchen", searchingPlayStation: "PlayStation Store wird durchsucht...", choosePlayStationGame: "Wähle das passende PlayStation-Spiel.", playStationGame: "PlayStation-Spiel", viewBackgrounds: "Hintergründe anzeigen", loading: "Laden...", backToResults: "Zurück zu den Ergebnissen", readingBackgrounds: "Hintergründe werden gelesen für", chooseBackground: "Wähle einen PlayStation-Hintergrund.", noBackgrounds: "Keine passenden Hintergründe gefunden.", noPlayStationGames: "Keine Spiele im PlayStation Store gefunden.",
@@ -536,7 +548,7 @@ const EXTRA_TRANSLATIONS = {
     },
     pt: {
         timeoutEnabled: "Ativar tempo limite", modeAuto: "Automático", forceMode: "Forçar modo", gameTimeout: "Tempo limite do jogo", gameTimeoutSeconds: "Tempo limite do jogo (segundos)", timeoutHelp: "Oculta automaticamente a cortina quando o tempo limite termina.", timeoutDisabledHelp: "A cortina permanece visível até o jogo ser detetado.", exitDelay: "Atraso de saída", exitDelayHelp: "Mantém a cortina visível por mais algum tempo depois de detetar o jogo.",
-        maintenance: "Manutenção", refreshGameCache: "Atualizar cache de jogos", deleteUnusedImages: "Eliminar imagens não utilizadas", downloadPlayStationAssets: "Transferir recursos PlayStation", removePlayStationAssets: "Remover recursos PlayStation", downloadingPlayStationAssets: "A transferir recursos PlayStation", removingPlayStationAssets: "A remover recursos PlayStation", playStationBulkApplied: "Aplicados", playStationBulkRemoved: "Removidos", playStationBulkSkipped: "Ignorados", playStationBulkFailed: "Falharam", playStationBulkError: "Não foi possível concluir a operação em lote da PlayStation",
+        maintenance: "Manutenção", refreshGameCache: "Atualizar cache de jogos", deleteUnusedImages: "Eliminar imagens não utilizadas", downloadPlayStationAssetsInstalled: "Transferir recursos PS dos jogos instalados", noInstalledGames: "Não foram encontrados jogos Steam instalados.", downloadPlayStationAssets: "Transferir recursos PlayStation", removePlayStationAssets: "Remover recursos PlayStation", downloadingPlayStationAssets: "A transferir recursos PlayStation", removingPlayStationAssets: "A remover recursos PlayStation", playStationBulkApplied: "Aplicados", playStationBulkRemoved: "Removidos", playStationBulkSkipped: "Ignorados", playStationBulkFailed: "Falharam", playStationBulkError: "Não foi possível concluir a operação em lote da PlayStation",
         tabGame: "Jogo", tabAppearance: "Aspeto", tabScrapers: "Fontes", gameBehavior: "Comportamento do Launch Curtain", gameBehaviorHelp: "Escolha como o Launch Curtain se comporta neste jogo.", enableForGame: "Ativar Launch Curtain neste jogo", logoHelp: "Controle o logótipo do jogo e abra o editor visual.", showLogo: "Mostrar logótipo", openEditor: "Abrir editor", logoZoom: "Ativar animação de aproximação do logótipo", bgZoom: "Ativar animação de afastamento do fundo",
         launchImage: "Imagem de arranque", noLaunchImage: "Nenhuma imagem de arranque selecionada", chooseLaunchImage: "Escolher imagem de arranque em ecrã inteiro", clearLaunchImage: "Remover imagem de arranque", editorTitle: "Editor", close: "Fechar", saving: "A guardar...", editorSaveFailed: "Não foi possível guardar as definições do editor.", backgroundOpacity: "Opacidade do fundo", logoShadowOpacity: "Opacidade da sombra do logótipo", logoShadowBlur: "Desfoque da sombra do logótipo", up: "Cima", down: "Baixo", left: "Esquerda", right: "Direita", reset: "Repor", smaller: "Menor", bigger: "Maior", cancel: "Cancelar", save: "Guardar",
         downloadBackgrounds: "Transferir fundos", scrapers: "Fontes de fundos", scrapersHelp: "Escolha uma fonte, procure o jogo e selecione um fundo.", searchQuery: "Texto de pesquisa", search: "Pesquisar", searching: "A pesquisar...", download: "Transferir", searchPlayStation: "Pesquisar na PlayStation Store", searchingPlayStation: "A pesquisar na PlayStation Store...", choosePlayStationGame: "Escolha o jogo PlayStation correspondente.", playStationGame: "Jogo PlayStation", viewBackgrounds: "Ver fundos", loading: "A carregar...", backToResults: "Voltar aos resultados", readingBackgrounds: "A ler fundos para", chooseBackground: "Escolha um fundo PlayStation.", noBackgrounds: "Não foram encontrados fundos adequados.", noPlayStationGames: "Não foram encontrados jogos na PlayStation Store.",
@@ -544,7 +556,7 @@ const EXTRA_TRANSLATIONS = {
     },
     "pt-br": {
         timeoutEnabled: "Ativar tempo limite", modeAuto: "Automático", forceMode: "Forçar modo", gameTimeout: "Tempo limite do jogo", gameTimeoutSeconds: "Tempo limite do jogo (segundos)", timeoutHelp: "Oculta automaticamente a cortina quando o tempo limite termina.", timeoutDisabledHelp: "A cortina permanece visível até o jogo ser detectado.", exitDelay: "Atraso de saída", exitDelayHelp: "Mantém a cortina visível por mais algum tempo depois de detectar o jogo.",
-        maintenance: "Manutenção", refreshGameCache: "Atualizar cache de jogos", deleteUnusedImages: "Excluir imagens não utilizadas", downloadPlayStationAssets: "Baixar recursos do PlayStation", removePlayStationAssets: "Remover recursos do PlayStation", downloadingPlayStationAssets: "Baixando recursos do PlayStation", removingPlayStationAssets: "Removendo recursos do PlayStation", playStationBulkApplied: "Aplicados", playStationBulkRemoved: "Removidos", playStationBulkSkipped: "Ignorados", playStationBulkFailed: "Falharam", playStationBulkError: "Não foi possível concluir a operação em lote do PlayStation",
+        maintenance: "Manutenção", refreshGameCache: "Atualizar cache de jogos", deleteUnusedImages: "Excluir imagens não utilizadas", downloadPlayStationAssetsInstalled: "Baixar recursos PS dos jogos instalados", noInstalledGames: "Nenhum jogo Steam instalado foi encontrado.", downloadPlayStationAssets: "Baixar recursos do PlayStation", removePlayStationAssets: "Remover recursos do PlayStation", downloadingPlayStationAssets: "Baixando recursos do PlayStation", removingPlayStationAssets: "Removendo recursos do PlayStation", playStationBulkApplied: "Aplicados", playStationBulkRemoved: "Removidos", playStationBulkSkipped: "Ignorados", playStationBulkFailed: "Falharam", playStationBulkError: "Não foi possível concluir a operação em lote do PlayStation",
         tabGame: "Jogo", tabAppearance: "Aparência", tabScrapers: "Fontes", gameBehavior: "Comportamento do Launch Curtain", gameBehaviorHelp: "Escolha como o Launch Curtain se comporta neste jogo.", enableForGame: "Ativar Launch Curtain neste jogo", logoHelp: "Controle o logotipo do jogo e abra o editor visual.", showLogo: "Mostrar logotipo", openEditor: "Abrir editor", logoZoom: "Ativar animação de aproximação do logotipo", bgZoom: "Ativar animação de afastamento do fundo",
         launchImage: "Imagem de inicialização", noLaunchImage: "Nenhuma imagem de inicialização selecionada", chooseLaunchImage: "Escolher imagem de inicialização em tela cheia", clearLaunchImage: "Remover imagem de inicialização", editorTitle: "Editor", close: "Fechar", saving: "Salvando...", editorSaveFailed: "Não foi possível salvar as configurações do editor.", backgroundOpacity: "Opacidade do fundo", logoShadowOpacity: "Opacidade da sombra do logotipo", logoShadowBlur: "Desfoque da sombra do logotipo", up: "Cima", down: "Baixo", left: "Esquerda", right: "Direita", reset: "Redefinir", smaller: "Menor", bigger: "Maior", cancel: "Cancelar", save: "Salvar",
         downloadBackgrounds: "Baixar fundos", scrapers: "Fontes de fundos", scrapersHelp: "Escolha uma fonte, pesquise o jogo e selecione um fundo.", searchQuery: "Texto de pesquisa", search: "Pesquisar", searching: "Pesquisando...", download: "Baixar", searchPlayStation: "Pesquisar na PlayStation Store", searchingPlayStation: "Pesquisando na PlayStation Store...", choosePlayStationGame: "Escolha o jogo PlayStation correspondente.", playStationGame: "Jogo PlayStation", viewBackgrounds: "Ver fundos", loading: "Carregando...", backToResults: "Voltar aos resultados", readingBackgrounds: "Lendo fundos para", chooseBackground: "Escolha um fundo do PlayStation.", noBackgrounds: "Nenhum fundo adequado encontrado.", noPlayStationGames: "Nenhum jogo encontrado na PlayStation Store.",
@@ -552,7 +564,7 @@ const EXTRA_TRANSLATIONS = {
     },
     nl: {
         timeoutEnabled: "Time-out inschakelen", modeAuto: "Automatisch", forceMode: "Modus forceren", gameTimeout: "Time-out voor spel", gameTimeoutSeconds: "Time-out voor spel (seconden)", timeoutHelp: "Verbergt het gordijn automatisch wanneer de time-out verloopt.", timeoutDisabledHelp: "Het gordijn blijft zichtbaar totdat het spel is gedetecteerd.", exitDelay: "Afsluitvertraging", exitDelayHelp: "Houdt het gordijn iets langer zichtbaar nadat het spel is gedetecteerd.",
-        maintenance: "Onderhoud", refreshGameCache: "Spelcache vernieuwen", deleteUnusedImages: "Ongebruikte afbeeldingen verwijderen", downloadPlayStationAssets: "PlayStation-assets downloaden", removePlayStationAssets: "PlayStation-assets verwijderen", downloadingPlayStationAssets: "PlayStation-assets downloaden", removingPlayStationAssets: "PlayStation-assets verwijderen", playStationBulkApplied: "Toegepast", playStationBulkRemoved: "Verwijderd", playStationBulkSkipped: "Overgeslagen", playStationBulkFailed: "Mislukt", playStationBulkError: "De PlayStation-bulkbewerking kon niet worden voltooid",
+        maintenance: "Onderhoud", refreshGameCache: "Spelcache vernieuwen", deleteUnusedImages: "Ongebruikte afbeeldingen verwijderen", downloadPlayStationAssetsInstalled: "PS-assets voor geïnstalleerde spellen downloaden", noInstalledGames: "Er zijn geen geïnstalleerde Steam-spellen gevonden.", downloadPlayStationAssets: "PlayStation-assets downloaden", removePlayStationAssets: "PlayStation-assets verwijderen", downloadingPlayStationAssets: "PlayStation-assets downloaden", removingPlayStationAssets: "PlayStation-assets verwijderen", playStationBulkApplied: "Toegepast", playStationBulkRemoved: "Verwijderd", playStationBulkSkipped: "Overgeslagen", playStationBulkFailed: "Mislukt", playStationBulkError: "De PlayStation-bulkbewerking kon niet worden voltooid",
         tabGame: "Spel", tabAppearance: "Uiterlijk", tabScrapers: "Bronnen", gameBehavior: "Gedrag van Launch Curtain", gameBehaviorHelp: "Kies hoe Launch Curtain zich voor dit spel gedraagt.", enableForGame: "Launch Curtain inschakelen voor dit spel", logoHelp: "Beheer het spellogo en open de visuele editor.", showLogo: "Logo tonen", openEditor: "Editor openen", logoZoom: "Inzoomanimatie van logo inschakelen", bgZoom: "Uitzoomanimatie van achtergrond inschakelen",
         launchImage: "Startafbeelding", noLaunchImage: "Geen startafbeelding geselecteerd", chooseLaunchImage: "Startafbeelding op volledig scherm kiezen", clearLaunchImage: "Startafbeelding verwijderen", editorTitle: "Editor", close: "Sluiten", saving: "Opslaan...", editorSaveFailed: "De editorinstellingen konden niet worden opgeslagen.", backgroundOpacity: "Dekking van achtergrond", logoShadowOpacity: "Dekking van logoschaduw", logoShadowBlur: "Vervaging van logoschaduw", up: "Omhoog", down: "Omlaag", left: "Links", right: "Rechts", reset: "Herstellen", smaller: "Kleiner", bigger: "Groter", cancel: "Annuleren", save: "Opslaan",
         downloadBackgrounds: "Achtergronden downloaden", scrapers: "Achtergrondbronnen", scrapersHelp: "Kies een bron, zoek het spel en selecteer daarna een achtergrond.", searchQuery: "Zoekterm", search: "Zoeken", searching: "Zoeken...", download: "Downloaden", searchPlayStation: "Zoeken in PlayStation Store", searchingPlayStation: "Zoeken in PlayStation Store...", choosePlayStationGame: "Kies het overeenkomende PlayStation-spel.", playStationGame: "PlayStation-spel", viewBackgrounds: "Achtergronden bekijken", loading: "Laden...", backToResults: "Terug naar resultaten", readingBackgrounds: "Achtergronden lezen voor", chooseBackground: "Kies een PlayStation-achtergrond.", noBackgrounds: "Geen geschikte achtergronden gevonden.", noPlayStationGames: "Geen spellen gevonden in PlayStation Store.",
@@ -560,7 +572,7 @@ const EXTRA_TRANSLATIONS = {
     },
     uk: {
         timeoutEnabled: "Увімкнути тайм-аут", modeAuto: "Автоматично", forceMode: "Примусовий режим", gameTimeout: "Тайм-аут гри", gameTimeoutSeconds: "Тайм-аут гри (секунди)", timeoutHelp: "Автоматично приховує завісу після завершення тайм-ауту.", timeoutDisabledHelp: "Завіса залишається видимою, доки гру не буде виявлено.", exitDelay: "Затримка виходу", exitDelayHelp: "Залишає завісу видимою трохи довше після виявлення гри.",
-        maintenance: "Обслуговування", refreshGameCache: "Оновити кеш ігор", deleteUnusedImages: "Видалити невикористані зображення", downloadPlayStationAssets: "Завантажити ресурси PlayStation", removePlayStationAssets: "Видалити ресурси PlayStation", downloadingPlayStationAssets: "Завантаження ресурсів PlayStation", removingPlayStationAssets: "Видалення ресурсів PlayStation", playStationBulkApplied: "Застосовано", playStationBulkRemoved: "Видалено", playStationBulkSkipped: "Пропущено", playStationBulkFailed: "Помилки", playStationBulkError: "Не вдалося завершити групову операцію PlayStation",
+        maintenance: "Обслуговування", refreshGameCache: "Оновити кеш ігор", deleteUnusedImages: "Видалити невикористані зображення", downloadPlayStationAssetsInstalled: "Завантажити ресурси PS для встановлених ігор", noInstalledGames: "Не знайдено встановлених ігор Steam.", downloadPlayStationAssets: "Завантажити ресурси PlayStation", removePlayStationAssets: "Видалити ресурси PlayStation", downloadingPlayStationAssets: "Завантаження ресурсів PlayStation", removingPlayStationAssets: "Видалення ресурсів PlayStation", playStationBulkApplied: "Застосовано", playStationBulkRemoved: "Видалено", playStationBulkSkipped: "Пропущено", playStationBulkFailed: "Помилки", playStationBulkError: "Не вдалося завершити групову операцію PlayStation",
         tabGame: "Гра", tabAppearance: "Вигляд", tabScrapers: "Джерела", gameBehavior: "Поведінка Launch Curtain", gameBehaviorHelp: "Виберіть поведінку Launch Curtain для цієї гри.", enableForGame: "Увімкнути Launch Curtain для цієї гри", logoHelp: "Керуйте логотипом гри та відкрийте візуальний редактор.", showLogo: "Показувати логотип", openEditor: "Відкрити редактор", logoZoom: "Увімкнути анімацію наближення логотипу", bgZoom: "Увімкнути анімацію віддалення фону",
         launchImage: "Зображення запуску", noLaunchImage: "Зображення запуску не вибрано", chooseLaunchImage: "Вибрати повноекранне зображення запуску", clearLaunchImage: "Видалити зображення запуску", editorTitle: "Редактор", close: "Закрити", saving: "Збереження...", editorSaveFailed: "Не вдалося зберегти налаштування редактора.", backgroundOpacity: "Непрозорість фону", logoShadowOpacity: "Непрозорість тіні логотипу", logoShadowBlur: "Розмиття тіні логотипу", up: "Вгору", down: "Вниз", left: "Ліворуч", right: "Праворуч", reset: "Скинути", smaller: "Менше", bigger: "Більше", cancel: "Скасувати", save: "Зберегти",
         downloadBackgrounds: "Завантажити фони", scrapers: "Джерела фонів", scrapersHelp: "Виберіть джерело, знайдіть гру, а потім виберіть фон.", searchQuery: "Пошуковий запит", search: "Пошук", searching: "Пошук...", download: "Завантажити", searchPlayStation: "Пошук у PlayStation Store", searchingPlayStation: "Пошук у PlayStation Store...", choosePlayStationGame: "Виберіть відповідну гру PlayStation.", playStationGame: "Гра PlayStation", viewBackgrounds: "Переглянути фони", loading: "Завантаження...", backToResults: "Назад до результатів", readingBackgrounds: "Читання фонів для", chooseBackground: "Виберіть фон PlayStation.", noBackgrounds: "Відповідних фонів не знайдено.", noPlayStationGames: "Ігор у PlayStation Store не знайдено.",
@@ -568,7 +580,7 @@ const EXTRA_TRANSLATIONS = {
     },
     zh: {
         timeoutEnabled: "启用超时", modeAuto: "自动", forceMode: "强制模式", gameTimeout: "游戏超时", gameTimeoutSeconds: "游戏超时（秒）", timeoutHelp: "超时后自动隐藏启动幕布。", timeoutDisabledHelp: "启动幕布会保持显示，直到检测到游戏。", exitDelay: "退出延迟", exitDelayHelp: "检测到游戏后，让启动幕布继续显示一小段时间。",
-        maintenance: "维护", refreshGameCache: "刷新游戏缓存", deleteUnusedImages: "删除未使用的图片", downloadPlayStationAssets: "下载 PlayStation 素材", removePlayStationAssets: "移除 PlayStation 素材", downloadingPlayStationAssets: "正在下载 PlayStation 素材", removingPlayStationAssets: "正在移除 PlayStation 素材", playStationBulkApplied: "已应用", playStationBulkRemoved: "已移除", playStationBulkSkipped: "已跳过", playStationBulkFailed: "失败", playStationBulkError: "无法完成 PlayStation 批量操作",
+        maintenance: "维护", refreshGameCache: "刷新游戏缓存", deleteUnusedImages: "删除未使用的图片", downloadPlayStationAssetsInstalled: "下载已安装游戏的 PS 素材", noInstalledGames: "未找到已安装的 Steam 游戏。", downloadPlayStationAssets: "下载 PlayStation 素材", removePlayStationAssets: "移除 PlayStation 素材", downloadingPlayStationAssets: "正在下载 PlayStation 素材", removingPlayStationAssets: "正在移除 PlayStation 素材", playStationBulkApplied: "已应用", playStationBulkRemoved: "已移除", playStationBulkSkipped: "已跳过", playStationBulkFailed: "失败", playStationBulkError: "无法完成 PlayStation 批量操作",
         tabGame: "游戏", tabAppearance: "外观", tabScrapers: "来源", gameBehavior: "Launch Curtain 行为", gameBehaviorHelp: "选择 Launch Curtain 对此游戏的行为。", enableForGame: "为此游戏启用 Launch Curtain", logoHelp: "管理游戏标志并打开可视化编辑器。", showLogo: "显示标志", openEditor: "打开编辑器", logoZoom: "启用标志放大动画", bgZoom: "启用背景缩小动画",
         launchImage: "启动图片", noLaunchImage: "未选择启动图片", chooseLaunchImage: "选择全屏启动图片", clearLaunchImage: "清除启动图片", editorTitle: "编辑器", close: "关闭", saving: "正在保存...", editorSaveFailed: "无法保存编辑器设置。", backgroundOpacity: "背景不透明度", logoShadowOpacity: "标志阴影不透明度", logoShadowBlur: "标志阴影模糊", up: "上", down: "下", left: "左", right: "右", reset: "重置", smaller: "缩小", bigger: "放大", cancel: "取消", save: "保存",
         downloadBackgrounds: "下载背景", scrapers: "背景来源", scrapersHelp: "选择一个来源，搜索游戏，然后选择背景。", searchQuery: "搜索内容", search: "搜索", searching: "正在搜索...", download: "下载", searchPlayStation: "搜索 PlayStation Store", searchingPlayStation: "正在搜索 PlayStation Store...", choosePlayStationGame: "选择匹配的 PlayStation 游戏。", playStationGame: "PlayStation 游戏", viewBackgrounds: "查看背景", loading: "正在加载...", backToResults: "返回结果", readingBackgrounds: "正在读取背景：", chooseBackground: "选择 PlayStation 背景。", noBackgrounds: "未找到合适的背景。", noPlayStationGames: "未在 PlayStation Store 中找到游戏。",
@@ -576,7 +588,7 @@ const EXTRA_TRANSLATIONS = {
     },
     ja: {
         timeoutEnabled: "タイムアウトを有効化", modeAuto: "自動", forceMode: "モードを強制", gameTimeout: "ゲームのタイムアウト", gameTimeoutSeconds: "ゲームのタイムアウト（秒）", timeoutHelp: "タイムアウトするとカーテンを自動的に非表示にします。", timeoutDisabledHelp: "ゲームが検出されるまでカーテンを表示し続けます。", exitDelay: "終了遅延", exitDelayHelp: "ゲーム検出後もカーテンを少し長く表示します。",
-        maintenance: "メンテナンス", refreshGameCache: "ゲームキャッシュを更新", deleteUnusedImages: "未使用の画像を削除", downloadPlayStationAssets: "PlayStation アセットをダウンロード", removePlayStationAssets: "PlayStation アセットを削除", downloadingPlayStationAssets: "PlayStation アセットをダウンロード中", removingPlayStationAssets: "PlayStation アセットを削除中", playStationBulkApplied: "適用済み", playStationBulkRemoved: "削除済み", playStationBulkSkipped: "スキップ", playStationBulkFailed: "失敗", playStationBulkError: "PlayStation の一括処理を完了できませんでした",
+        maintenance: "メンテナンス", refreshGameCache: "ゲームキャッシュを更新", deleteUnusedImages: "未使用の画像を削除", downloadPlayStationAssetsInstalled: "インストール済みゲームの PS アセットをダウンロード", noInstalledGames: "インストール済みの Steam ゲームが見つかりません。", downloadPlayStationAssets: "PlayStation アセットをダウンロード", removePlayStationAssets: "PlayStation アセットを削除", downloadingPlayStationAssets: "PlayStation アセットをダウンロード中", removingPlayStationAssets: "PlayStation アセットを削除中", playStationBulkApplied: "適用済み", playStationBulkRemoved: "削除済み", playStationBulkSkipped: "スキップ", playStationBulkFailed: "失敗", playStationBulkError: "PlayStation の一括処理を完了できませんでした",
         tabGame: "ゲーム", tabAppearance: "外観", tabScrapers: "ソース", gameBehavior: "Launch Curtain の動作", gameBehaviorHelp: "このゲームでの Launch Curtain の動作を選択します。", enableForGame: "このゲームで Launch Curtain を有効化", logoHelp: "ゲームロゴを管理し、ビジュアルエディターを開きます。", showLogo: "ロゴを表示", openEditor: "エディターを開く", logoZoom: "ロゴのズームインアニメーションを有効化", bgZoom: "背景のズームアウトアニメーションを有効化",
         launchImage: "起動画像", noLaunchImage: "起動画像が選択されていません", chooseLaunchImage: "全画面の起動画像を選択", clearLaunchImage: "起動画像を削除", editorTitle: "エディター", close: "閉じる", saving: "保存中...", editorSaveFailed: "エディター設定を保存できませんでした。", backgroundOpacity: "背景の不透明度", logoShadowOpacity: "ロゴ影の不透明度", logoShadowBlur: "ロゴ影のぼかし", up: "上", down: "下", left: "左", right: "右", reset: "リセット", smaller: "小さく", bigger: "大きく", cancel: "キャンセル", save: "保存",
         downloadBackgrounds: "背景をダウンロード", scrapers: "背景ソース", scrapersHelp: "ソースを選び、ゲームを検索してから背景を選択します。", searchQuery: "検索語", search: "検索", searching: "検索中...", download: "ダウンロード", searchPlayStation: "PlayStation Store を検索", searchingPlayStation: "PlayStation Store を検索中...", choosePlayStationGame: "一致する PlayStation ゲームを選択してください。", playStationGame: "PlayStation ゲーム", viewBackgrounds: "背景を表示", loading: "読み込み中...", backToResults: "結果に戻る", readingBackgrounds: "背景を読み込み中：", chooseBackground: "PlayStation の背景を選択してください。", noBackgrounds: "適切な背景が見つかりませんでした。", noPlayStationGames: "PlayStation Store にゲームが見つかりませんでした。",
@@ -623,14 +635,19 @@ const LAUNCH_BRIDGE_COVER_MS = 2800;
 const CONFIRMED_LAUNCH_COVER_MS = 6500;
 const POST_PLAY_CONFIRM_COVER_MS = 2600;
 const POST_PLAY_ARM_MS = 18000;
-const POST_PLAY_CONFIRM_PATTERN = /(play|launch|start|run|continue|accept|agree|ok|yes|gioca|avvia|continua|accetta|conferma|esegui|exe|configuration|configurazione|config|controller|keyboard|tastiera|terms|license|licenza|eula)/i;
+const POST_PLAY_CONFIRM_PATTERN = /(play|launch|start|run|continue|continue anyway|accept|agree|ok|okay|yes|got it|understood|select (?:a )?launch option|launch options?|startup options?|choose|proceed|gioca|avvia|continua|continua comunque|accetta|conferma|esegui|scegli|seleziona|procedi|ricevuto|ho capito|va bene|s[iì]|exe|configuration|configurazione|config|controller|keyboard|tastiera|terms|license|licenza|eula)/i;
+const POST_PLAY_CANCEL_PATTERN = /^(?:cancel|back|close|dismiss|annulla|indietro|chiudi|abbrechen|zuruck|schliessen|annuler|retour|fermer|cancelar|volver|cerrar|anuluj|wstecz|zamknij|otmena|nazad|zakryt|取消|返回|关闭|キャンセル|戻る|閉じる|취소|뒤로|닫기)$/iu;
 
 
 
+
+const POST_PLAY_PROMPT_HOLD_MS = 5 * 60 * 1000;
+const MODERN_FAIL_OPEN_MS = 75 * 1000;
 
 // Hook del pulsante Play + instant curtain (DOM in-CEF). Ricostruito dal dist.
 class PlayButtonLaunchHook {
     constructor() {
+        this.instanceId = `launch-curtain-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         this.enabled = false;
         this.setupDone = false;
         this.lastTriggerAt = 0;
@@ -638,13 +655,20 @@ class PlayButtonLaunchHook {
         this.postPlayCoverUntil = 0;
         this.postPlayCoverReadyAt = 0;
         this.lastPostPlayCoverAt = 0;
+        this.promptWatchTimer = undefined;
+        this.promptSuspended = false;
+        this.popupCreatedRegistration = undefined;
+        this.popupDestroyedRegistration = undefined;
         this.methodRestorers = [];
         this.instantCurtainExpiresAt = 0;
+        this.instantCurtainSafetyTimer = undefined;
         this.instantCurtainVisible = false;
         this.backendLaunchToken = 0;
         this.prearmLogoToken = 0;
         this.gamepadClosePressed = false;
         this.gamepadLaunchPressed = false;
+        this.gamepadLaunchArmedButton = undefined;
+        this.gamepadLaunchArmedAppId = undefined;
         this.gamepadCloseIgnoreUntil = 0;
         this.gamepadCloseOverlayRunning = false;
         this.gamepadCloseStatusCheckedAt = 0;
@@ -669,16 +693,28 @@ class PlayButtonLaunchHook {
         this.instantAnimationEpoch = 0;
         this.instantAnimationStartedAt = 0;
         this.gameRunning = false;
+        this.suppressPrearmUntil = 0;
+        this.dismissInputSuppressionUntil = 0;
+        this.gamepadClosePending = false;
         this.uiMode = undefined;
         this.handlePointerDown = (event) => {
+            if (this.cancelPostPlayInteraction("post-play pointerdown", event.target, event.composedPath())) {
+                return;
+            }
             this.coverPostPlayInteraction("post-play pointerdown", event.target, event.composedPath());
             this.handleLaunchInput("play button pointerdown", event.target, event.composedPath());
         };
         this.handleMouseDown = (event) => {
+            if (this.cancelPostPlayInteraction("post-play mousedown", event.target, event.composedPath())) {
+                return;
+            }
             this.coverPostPlayInteraction("post-play mousedown", event.target, event.composedPath());
             this.handleLaunchInput("play button mousedown", event.target, event.composedPath());
         };
         this.handleTouchStart = (event) => {
+            if (this.cancelPostPlayInteraction("post-play touchstart", event.target, event.composedPath())) {
+                return;
+            }
             this.coverPostPlayInteraction("post-play touchstart", event.target, event.composedPath());
             this.handleLaunchInput("play button touchstart", event.target, event.composedPath());
         };
@@ -689,13 +725,27 @@ class PlayButtonLaunchHook {
             this.prearmFromEvent(event.target, event.composedPath());
         };
         this.handleClick = (event) => {
+            if (this.cancelPostPlayInteraction("post-play click", event.target, event.composedPath())) {
+                return;
+            }
+            this.coverPostPlayInteraction("post-play click", event.target, event.composedPath());
             this.handleLaunchInput("play button click", event.target, event.composedPath());
         };
         this.handleKeyClose = (event) => {
-            if (event.key === "Escape" && this.instantCurtainVisible) {
+            const now = Date.now();
+            const dismissKey = event.key === "Escape"
+                || event.key === "BrowserBack"
+                || event.code === "Escape"
+                || event.keyCode === 27;
+            const closeSurfaceActive = this.instantCurtainVisible || this.gamepadCloseOverlayRunning;
+            if (dismissKey && (closeSurfaceActive || now < this.dismissInputSuppressionUntil)) {
                 event.preventDefault();
                 event.stopPropagation();
-                this.requestCloseAllCurtains();
+                event.stopImmediatePropagation?.();
+                if (closeSurfaceActive) {
+                    this.dismissInputSuppressionUntil = now + 900;
+                    this.requestCloseAllCurtains();
+                }
                 return true;
             }
             return false;
@@ -707,9 +757,14 @@ class PlayButtonLaunchHook {
             if (!["Enter", " "].includes(event.key)) {
                 return;
             }
-            this.coverPostPlayInteraction("post-play keydown", document.activeElement, []);
-            if (this.isPlayButtonEvent(document.activeElement, [])) {
-                this.handleLaunchInput("play button keydown", document.activeElement, []);
+            const eventTarget = event.target || event.currentTarget?.activeElement || document.activeElement;
+            const eventPath = typeof event.composedPath === "function" ? event.composedPath() : [];
+            if (this.cancelPostPlayInteraction("post-play keydown", eventTarget, eventPath)) {
+                return;
+            }
+            this.coverPostPlayInteraction("post-play keydown", eventTarget, eventPath);
+            if (this.isPlayButtonEvent(eventTarget, eventPath)) {
+                this.handleLaunchInput("play button keydown", eventTarget, eventPath);
             }
         };
         this.handleVisibilityChange = () => {
@@ -723,6 +778,20 @@ class PlayButtonLaunchHook {
         if (this.setupDone) {
             return;
         }
+        const registryHost = window.SteamClient?.Apps;
+        const registryKey = "__playhubLaunchCurtainPlayHook";
+        try {
+            const previousHook = registryHost?.[registryKey];
+            if (previousHook && previousHook !== this && typeof previousHook.cleanup === "function") {
+                previousHook.cleanup();
+            }
+            if (registryHost) {
+                registryHost[registryKey] = this;
+                this.registryHost = registryHost;
+                this.registryKey = registryKey;
+            }
+        }
+        catch (_error) {}
         this.setupDone = true;
         this.ensureInstantCurtainPrepared();
         document.addEventListener("pointerdown", this.handlePointerDown, true);
@@ -736,6 +805,7 @@ class PlayButtonLaunchHook {
         document.addEventListener("visibilitychange", this.handleVisibilityChange);
         window.addEventListener("focus", this.handleWindowFocus);
         this.patchSteamClient();
+        this.registerSteamPopupHooks();
         this.startGamepadLaunchPolling();
         this.startArmPoll();
         this.pollTimer = window.setInterval(() => this.patchSteamClient(), 1000);
@@ -752,9 +822,12 @@ class PlayButtonLaunchHook {
         document.removeEventListener("visibilitychange", this.handleVisibilityChange);
         window.removeEventListener("focus", this.handleWindowFocus);
         this.restoreMethodPatches();
+        this.stopPromptWatch();
+        this.unregisterSteamPopupHooks();
         this.stopGamepadLaunchPolling();
         this.stopArmPoll();
         this.hideInstantCurtain();
+        void setNativePromptVisible({ visible: false }).catch(() => {});
         void hideBlackCover().catch((error) => {
             console.warn("Launch Curtain black pre-cover cleanup failed", error);
         });
@@ -765,6 +838,14 @@ class PlayButtonLaunchHook {
         }
         this.clearPendingBackendLaunch();
         this.patchedApps = undefined;
+        try {
+            if (this.registryHost?.[this.registryKey] === this) {
+                delete this.registryHost[this.registryKey];
+            }
+        }
+        catch (_error) {}
+        this.registryHost = undefined;
+        this.registryKey = undefined;
         this.setupDone = false;
     }
     setEnabled(enabled) {
@@ -845,7 +926,13 @@ class PlayButtonLaunchHook {
         }, 0);
     }
     prearmFromEvent(target, composedPath) {
-        if (!this.enabled || this.instantCurtainVisible || !this.isPlayButtonEvent(target, composedPath)) {
+        if (
+            !this.enabled
+            || this.instantCurtainVisible
+            || this.gameRunning
+            || Date.now() < this.suppressPrearmUntil
+            || !this.isPlayButtonEvent(target, composedPath)
+        ) {
             return;
         }
         const appId = this.findAppIdForEvent(target, composedPath);
@@ -864,7 +951,7 @@ class PlayButtonLaunchHook {
         const candidates = [];
         const path = composedPath.length > 0 ? composedPath : this.parentPath(target);
         for (const item of path.slice(0, 10)) {
-            if (!(item instanceof HTMLElement)) {
+            if (!this.isElementNode(item)) {
                 continue;
             }
             const isCandidate = item.tagName === "BUTTON"
@@ -878,26 +965,61 @@ class PlayButtonLaunchHook {
     }
     parentPath(target) {
         const path = [];
-        let current = target instanceof HTMLElement ? target : null;
+        let current = this.isElementNode(target) ? target : null;
         while (current && path.length < 10) {
             path.push(current);
             current = current.parentElement;
         }
         return path;
     }
+    isElementNode(candidate) {
+        return Boolean(candidate && candidate.nodeType === 1 && typeof candidate.getAttribute === "function");
+    }
     isExactPlayButton(element) {
         if (this.hasBlockedContext(element)) {
             return false;
         }
-        const labels = this.getLabels(element);
-        return labels.some((label) => {
-            const normalized = this.normalizeLabel(label);
-            if (BLOCKED_PLAY_LABEL_HINTS.test(label)) {
-                return false;
-            }
-            return PLAY_LABELS.has(normalized)
-                || Array.from(PLAY_LABELS).some((playLabel) => normalized.startsWith(`${playLabel} `));
-        });
+
+        // Steam library capsules may expose accessibility labels such as
+        // "Play <game title>" even though activating them only opens the game
+        // details page. Treating every label that starts with Play/Gioca as a
+        // launch action makes the speculative curtain appear during navigation.
+        //
+        // A real details-page Play control has visible Play text, or is an
+        // icon-only control with an exact accessible Play label. Native
+        // SteamClient RunGame hooks remain the final launch confirmation.
+        const href = String(element.getAttribute("href") || "").trim();
+        const role = this.normalizeLabel(element.getAttribute("role") || "");
+        if (
+            element.tagName === "A"
+            || role === "link"
+            || (href && !/^steam:\/\/(?:run|rungameid)\//i.test(href))
+        ) {
+            return false;
+        }
+
+        const visibleText = String(element.innerText || "").trim();
+        if (visibleText) {
+            return this.isExactPlayLabel(visibleText);
+        }
+
+        const fallbackText = String(element.textContent || "").trim();
+        if (fallbackText) {
+            return this.isExactPlayLabel(fallbackText);
+        }
+
+        const accessibleLabels = [
+            element.getAttribute("aria-label") ?? "",
+            element.getAttribute("title") ?? ""
+        ];
+        return accessibleLabels.some((label) => this.isExactPlayLabel(label));
+    }
+    isExactPlayLabel(label) {
+        const trimmed = String(label || "").trim();
+        if (!trimmed || trimmed.length > 24 || BLOCKED_PLAY_LABEL_HINTS.test(trimmed)) {
+            return false;
+        }
+        return PLAY_LABELS.has(this.normalizeLabel(trimmed));
     }
     hasBlockedContext(element) {
         let current = element;
@@ -936,7 +1058,7 @@ class PlayButtonLaunchHook {
         const sources = [];
         const path = composedPath.length > 0 ? composedPath : this.parentPath(target);
         for (const item of path.slice(0, 16)) {
-            if (!(item instanceof HTMLElement)) {
+            if (!this.isElementNode(item)) {
                 continue;
             }
             const reactAppId = this.readReactAppId(item);
@@ -1406,6 +1528,7 @@ class PlayButtonLaunchHook {
         this.lastTriggerAt = now;
         this.postPlayCoverUntil = now + POST_PLAY_ARM_MS;
         this.postPlayCoverReadyAt = now + Math.min(1100, PROBATION_COVER_MS);
+        this.startPromptWatch();
         const effectiveShortcut = isShortcut || Boolean(appId && appId >= 2147483648);
         const effectiveLogoSource = gameSettings.show_logo === false ? undefined : logoSource;
         if (confirmedLaunch) {
@@ -1480,11 +1603,24 @@ class PlayButtonLaunchHook {
             this.backendLaunchTimer = undefined;
         }
     }
-    showInstantLaunchSurface() {
+    showInstantLaunchSurface(appId) {
         this.showNativeBlackCover("SteamClient immediate black cover", LAUNCH_BRIDGE_COVER_MS);
-        this.currentBackdropAppId = undefined;
-        this.paintInstantBackdrop("", 0);
-        this.setInstantCurtainLogo("", false);
+        const targetAppId = appId || this.prearmedInstantAppId || this.currentBackdropAppId;
+        if (targetAppId) {
+            const settings = this.gameSettingsForApp(targetAppId);
+            const logoSource = settings.show_logo === false ? undefined : this.findGameLogoSource(targetAppId);
+            this.prearmInstantCurtain(
+                targetAppId,
+                logoSource,
+                targetAppId >= 2147483648,
+                settings.show_logo !== false
+            );
+        }
+        else {
+            this.currentBackdropAppId = undefined;
+            this.paintInstantBackdrop("", 0);
+            this.setInstantCurtainLogo("", false);
+        }
         this.revealInstantCurtain(PROBATION_COVER_MS);
     }
     showNativeBlackCover(reason, ttlMs = PROBATION_COVER_MS) {
@@ -1508,19 +1644,62 @@ class PlayButtonLaunchHook {
         if (now < this.postPlayCoverReadyAt || now > this.postPlayCoverUntil) {
             return false;
         }
-        if (this.instantCurtainVisible || now - this.lastPostPlayCoverAt < 550) {
+        if (this.instantCurtainVisible || (!this.promptSuspended && now - this.lastPostPlayCoverAt < 550)) {
             return false;
         }
         if (!this.isPostPlayConfirmCandidate(target, composedPath)) {
             return false;
         }
         this.lastPostPlayCoverAt = now;
+        this.promptSuspended = false;
+        void setNativePromptVisible({ visible: false }).catch(() => {});
         this.showNativeBlackCover(reason, POST_PLAY_CONFIRM_COVER_MS);
         this.revealInstantCurtain(POST_PLAY_CONFIRM_COVER_MS);
         return true;
     }
-    isPostPlayConfirmCandidate(target, composedPath) {
+    cancelPostPlayInteraction(reason, target, composedPath) {
+        const now = Date.now();
+        if (!this.enabled || this.postPlayCoverUntil <= 0 || now > this.postPlayCoverUntil) {
+            return false;
+        }
+        if (!this.isPostPlayCancelCandidate(target, composedPath)) {
+            return false;
+        }
+        this.dbg(`${reason}: Steam launch cancelled`);
+        window.setTimeout(() => this.requestCloseAllCurtains(), 0);
+        return true;
+    }
+    postPlayPromptSelector() {
+        return '[role="dialog"], [role="menu"], [aria-modal="true"], [class*="Modal"], [class*="modal"], [class*="Dialog"], [class*="dialog"], [class*="Popup"], [class*="popup"]';
+    }
+    getPostPlayCandidateElements(target, composedPath) {
         const candidates = this.getCandidateElements(target, composedPath);
+        const path = composedPath.length > 0 ? composedPath : this.parentPath(target);
+        for (const item of path.slice(0, 12)) {
+            if (!this.isElementNode(item)) {
+                continue;
+            }
+            const role = item.getAttribute("role");
+            if ((role === "menuitem" || role === "option") && !candidates.includes(item)) {
+                candidates.push(item);
+            }
+        }
+        return candidates;
+    }
+    isPostPlayCancelCandidate(target, composedPath) {
+        return this.getPostPlayCandidateElements(target, composedPath).some((element) => {
+            const promptAncestor = element.closest?.(this.postPlayPromptSelector());
+            if (!this.isElementNode(promptAncestor)) {
+                return false;
+            }
+            return this.getLabels(element).some((label) => POST_PLAY_CANCEL_PATTERN.test(this.normalizeLabel(label)));
+        });
+    }
+    isPostPlayConfirmCandidate(target, composedPath) {
+        if (this.isPostPlayCancelCandidate(target, composedPath)) {
+            return false;
+        }
+        const candidates = this.getPostPlayCandidateElements(target, composedPath);
         if (candidates.length <= 0) {
             return false;
         }
@@ -1529,8 +1708,8 @@ class PlayButtonLaunchHook {
             if (POST_PLAY_CONFIRM_PATTERN.test(labels)) {
                 return true;
             }
-            const promptAncestor = element.closest?.('[role="dialog"], [aria-modal="true"], [class*="Modal"], [class*="modal"], [class*="Dialog"], [class*="dialog"], [class*="Popup"], [class*="popup"]');
-            if (!(promptAncestor instanceof HTMLElement)) {
+            const promptAncestor = element.closest?.(this.postPlayPromptSelector());
+            if (!this.isElementNode(promptAncestor)) {
                 return false;
             }
             const rect = promptAncestor.getBoundingClientRect();
@@ -1539,6 +1718,7 @@ class PlayButtonLaunchHook {
         });
     }
     patchSteamClient() {
+        this.registerSteamPopupHooks();
         const apps = window.SteamClient?.Apps;
         if (!apps || apps === this.patchedApps) {
             return;
@@ -1552,22 +1732,23 @@ class PlayButtonLaunchHook {
         ].forEach((methodName) => this.patchSteamMethod(apps, methodName));
     }
     patchSteamMethod(apps, methodName) {
-        const original = apps[methodName];
-        if (typeof original !== "function") {
+        const current = apps[methodName];
+        if (typeof current !== "function") {
             return;
         }
-        const originalFn = original;
+        const originalFn = current.__playhubLaunchCurtainOriginal || current;
         const wrapped = function (...args) {
-            playButtonHook.showInstantLaunchSurface();
             const appId = playButtonHook.extractAppIdFromUnknown(args);
+            playButtonHook.showInstantLaunchSurface(appId);
             playButtonHook.trigger(`SteamClient.Apps.${methodName}`, appId, undefined, true, methodName === "RunShortcut");
             return originalFn.apply(this, args);
         };
+        wrapped.__playhubLaunchCurtainOriginal = originalFn;
         try {
             apps[methodName] = wrapped;
             this.methodRestorers.push(() => {
                 if (apps[methodName] === wrapped) {
-                    apps[methodName] = original;
+                    apps[methodName] = originalFn;
                 }
             });
         }
@@ -1601,15 +1782,71 @@ class PlayButtonLaunchHook {
             }
             catch (_error) {}
             try { push(root?.Router?.WindowStore?.GamepadUIMainWindowInstance?.BrowserWindow); } catch (_error) {}
+            try {
+                const manager = root?.g_PopupManager;
+                const popups = Array.from(manager?.GetPopups?.() ?? manager?.m_mapPopups?.values?.() ?? []);
+                popups.forEach((entry) => {
+                    push(entry?.m_popup);
+                    push(entry?.m_popup?.window);
+                    push(entry?.m_element?.ownerDocument);
+                });
+            }
+            catch (_error) {}
         }
         try { push(document); } catch (_error) {}
         try { push(window); } catch (_error) {}
         return docs;
     }
+    registerSteamPopupHooks() {
+        const manager = globalThis.g_PopupManager;
+        if (!manager) {
+            return;
+        }
+        if (!this.popupCreatedRegistration && typeof manager.AddPopupCreatedCallback === "function") {
+            this.popupCreatedRegistration = manager.AddPopupCreatedCallback(() => {
+                window.setTimeout(() => {
+                    this.ensureInstantCurtainPrepared();
+                    if (this.instantCurtainVisible) {
+                        this.syncModernCurtainSurfaces();
+                    }
+                }, 0);
+            });
+        }
+        if (!this.popupDestroyedRegistration && typeof manager.AddPopupDestroyedCallback === "function") {
+            this.popupDestroyedRegistration = manager.AddPopupDestroyedCallback(() => {
+                window.setTimeout(() => this.ensureInstantCurtainPrepared(), 0);
+            });
+        }
+    }
+    releaseSteamPopupRegistration(registration) {
+        try {
+            if (typeof registration === "function") {
+                registration();
+            }
+            else {
+                registration?.Unregister?.();
+                registration?.unregister?.();
+                registration?.Dispose?.();
+                registration?.dispose?.();
+            }
+        }
+        catch (_error) {}
+    }
+    unregisterSteamPopupHooks() {
+        this.releaseSteamPopupRegistration(this.popupCreatedRegistration);
+        this.releaseSteamPopupRegistration(this.popupDestroyedRegistration);
+        this.popupCreatedRegistration = undefined;
+        this.popupDestroyedRegistration = undefined;
+    }
     createInstantCurtain(doc) {
         const curtain = doc.createElement("div");
         curtain.className = "launch-curtain-instant";
         curtain.setAttribute("data-launch-curtain-surface", "true");
+        curtain.setAttribute("data-launch-curtain-owner", this.instanceId);
+        curtain.style.display = "none";
+        curtain.style.visibility = "hidden";
+        curtain.style.opacity = "0";
+        curtain.style.pointerEvents = "none";
         curtain.innerHTML = `
       <style>
         .launch-curtain-cursor-hidden,
@@ -1620,7 +1857,7 @@ class PlayButtonLaunchHook {
           position: fixed;
           inset: 0;
           z-index: 2147483647;
-          display: flex;
+          display: none;
           align-items: center;
           justify-content: center;
           background: #000;
@@ -1721,29 +1958,22 @@ class PlayButtonLaunchHook {
         try {
             doc.addEventListener("keydown", this.handleKeyDown, true);
             doc.addEventListener("keyup", this.handleKeyClose, true);
-            this.instantCurtainKeyDocuments.add(doc);
-        }
-        catch (_error) {}
-        try {
-            const Observer = doc.defaultView?.MutationObserver ?? globalThis.MutationObserver;
-            if (Observer) {
-                const observer = new Observer(() => {
-                    try {
-                        if (this.instantCurtainVisible && curtain.isConnected && doc.documentElement?.lastElementChild !== curtain) {
-                            doc.documentElement.appendChild(curtain);
-                        }
-                    }
-                    catch (_error) {}
-                });
-                observer.observe(doc.documentElement, { childList: true });
-                this.instantCurtainObserversByDocument.set(doc, observer);
+            if (doc !== document) {
+                doc.addEventListener("pointerdown", this.handlePointerDown, true);
+                doc.addEventListener("mousedown", this.handleMouseDown, true);
+                doc.addEventListener("touchstart", this.handleTouchStart, true);
+                doc.addEventListener("pointerover", this.handlePointerOver, true);
+                doc.addEventListener("focusin", this.handleFocusIn, true);
+                doc.addEventListener("click", this.handleClick, true);
             }
+            this.instantCurtainKeyDocuments.add(doc);
         }
         catch (_error) {}
         this.wireInstantLogoFallback(curtain);
         if (this.instantCurtainVisible) {
             doc.documentElement.classList.add("launch-curtain-cursor-hidden");
             curtain.style.transition = "none";
+            curtain.style.display = "flex";
             curtain.style.visibility = "visible";
             curtain.style.opacity = "1";
         }
@@ -1755,19 +1985,34 @@ class PlayButtonLaunchHook {
                 try { this.instantCurtainObserversByDocument.get(doc)?.disconnect?.(); } catch (_error) {}
                 try { doc.removeEventListener("keydown", this.handleKeyDown, true); } catch (_error) {}
                 try { doc.removeEventListener("keyup", this.handleKeyClose, true); } catch (_error) {}
+                try { doc.removeEventListener("pointerdown", this.handlePointerDown, true); } catch (_error) {}
+                try { doc.removeEventListener("mousedown", this.handleMouseDown, true); } catch (_error) {}
+                try { doc.removeEventListener("touchstart", this.handleTouchStart, true); } catch (_error) {}
+                try { doc.removeEventListener("pointerover", this.handlePointerOver, true); } catch (_error) {}
+                try { doc.removeEventListener("focusin", this.handleFocusIn, true); } catch (_error) {}
+                try { doc.removeEventListener("click", this.handleClick, true); } catch (_error) {}
                 this.instantCurtainKeyDocuments.delete(doc);
                 this.instantCurtainObserversByDocument.delete(doc);
                 try { curtain?.remove?.(); } catch (_error) {}
                 this.instantCurtainElementsByDocument.delete(doc);
             }
-            else if (this.instantCurtainVisible && doc.documentElement.lastElementChild !== curtain) {
-                try { doc.documentElement.appendChild(curtain); } catch (_error) {}
-            }
         }
         for (const doc of this.getAllSteamDocuments()) {
             const existing = this.instantCurtainElementsByDocument.get(doc);
-            if (existing?.isConnected) continue;
             try {
+                for (const stale of Array.from(doc.querySelectorAll('[data-launch-curtain-surface="true"]'))) {
+                    if (stale === existing && stale.getAttribute("data-launch-curtain-owner") === this.instanceId) {
+                        continue;
+                    }
+                    stale.style.display = "none";
+                    stale.style.visibility = "hidden";
+                    stale.style.opacity = "0";
+                    stale.remove();
+                }
+                if (existing?.isConnected) {
+                    continue;
+                }
+                doc.documentElement.classList.remove("launch-curtain-cursor-hidden");
                 this.instantCurtainElementsByDocument.set(doc, this.createInstantCurtain(doc));
             }
             catch (error) {
@@ -1870,7 +2115,18 @@ class PlayButtonLaunchHook {
         this.stopArmPoll();
         const poll = () => {
             void getStatus().then((st) => {
+                const wasGameRunning = this.gameRunning;
                 this.gameRunning = !!(st && st.game_running);
+                if (wasGameRunning && !this.gameRunning) {
+                    this.suppressPrearmUntil = Date.now() + 8000;
+                    if (this.instantCurtainVisible) {
+                        this.hideInstantCurtain(true);
+                    }
+                    else {
+                        this.clearInstantArtwork();
+                    }
+                    this.dbg("game exit observed: cleared prepared artwork");
+                }
             }).catch(() => {});
             this.armPollTimer = window.setTimeout(poll, 2000);
         };
@@ -1913,6 +2169,11 @@ class PlayButtonLaunchHook {
             const safeOpacity = Math.max(0, Math.min(1, Number(opacity) || 0));
             img.style.setProperty("--lc-backdrop-opacity", resolvedUrl ? String(safeOpacity) : "0");
             if (resolvedUrl) {
+                // clearInstantArtwork() hard-hides the previous frame. Restore CSS
+                // control before arming the next image, otherwise inline opacity
+                // keeps every later backdrop invisible while the logo still shows.
+                img.style.removeProperty("opacity");
+                img.style.removeProperty("transition");
                 if (img.getAttribute("src") !== resolvedUrl) {
                     img.addEventListener("load", () => {
                         if (this.instantCurtainVisible) {
@@ -2074,6 +2335,10 @@ class PlayButtonLaunchHook {
         if (this.instantCurtainTimer !== undefined) {
             window.clearTimeout(this.instantCurtainTimer);
         }
+        if (this.instantCurtainSafetyTimer !== undefined) {
+            window.clearTimeout(this.instantCurtainSafetyTimer);
+            this.instantCurtainSafetyTimer = undefined;
+        }
         if (this.instantCurtainTransitionFrame !== undefined) {
             window.cancelAnimationFrame(this.instantCurtainTransitionFrame);
             this.instantCurtainTransitionFrame = undefined;
@@ -2090,6 +2355,7 @@ class PlayButtonLaunchHook {
             curtain.ownerDocument?.documentElement?.classList?.add("launch-curtain-cursor-hidden");
             curtain.classList.remove("launch-curtain-instant--art-visible");
             curtain.style.transition = "none";
+            curtain.style.display = "flex";
             curtain.style.visibility = "visible";
             curtain.style.opacity = "1";
             curtain.getBoundingClientRect();
@@ -2107,8 +2373,19 @@ class PlayButtonLaunchHook {
         });
         if (this.isModernMode()) {
             this.instantCurtainExpiresAt = 0;
+            this.instantCurtainSafetyTimer = window.setTimeout(() => {
+                this.instantCurtainSafetyTimer = undefined;
+                if (!this.instantCurtainVisible) {
+                    return;
+                }
+                this.dbg("fail-open watchdog released a stale modern curtain");
+                this.requestCloseAllCurtains();
+            }, MODERN_FAIL_OPEN_MS);
             this.startGamepadClosePolling();
             this.startModernHandoffPoll();
+        }
+        if (this.postPlayCoverUntil > Date.now()) {
+            this.startPromptWatch();
         }
         else {
             const safeDurationMs = Math.max(600, Math.min(4200, Number(durationMs) || PROBATION_COVER_MS));
@@ -2122,13 +2399,48 @@ class PlayButtonLaunchHook {
             this.hideInstantCurtain();
         }
     }
-    hideInstantCurtain() {
+    clearInstantArtwork() {
+        this.backdropPreviewToken += 1;
+        this.logoPreviewToken += 1;
+        this.currentBackdropAppId = undefined;
+        this.currentBackdropSource = "";
+        this.currentBackdropResolvedUrl = "";
+        this.currentBackdropOpacity = 0;
+        this.activeInstantAppId = undefined;
+        this.prearmedInstantAppId = undefined;
+        for (const curtain of Array.from(this.instantCurtainElementsByDocument.values()).filter((item) => item?.isConnected)) {
+            try {
+                curtain.style.display = "none";
+                curtain.style.visibility = "hidden";
+                curtain.style.opacity = "0";
+                curtain.ownerDocument?.documentElement?.classList?.remove("launch-curtain-cursor-hidden");
+                curtain.classList.remove("launch-curtain-instant--art-visible");
+                const backdrop = curtain.querySelector(".launch-curtain-instant__backdrop");
+                if (backdrop) {
+                    backdrop.style.transition = "none";
+                    backdrop.style.opacity = "0";
+                    backdrop.removeAttribute("src");
+                    backdrop.classList.remove("launch-curtain-instant__backdrop--zoom");
+                    delete backdrop.dataset.lcAnimationEpoch;
+                }
+            }
+            catch (_error) {}
+        }
+        this.setInstantCurtainLogo("", false);
+    }
+    hideInstantCurtain(clearArtworkImmediately = false) {
+        if (this.instantCurtainSafetyTimer !== undefined) {
+            window.clearTimeout(this.instantCurtainSafetyTimer);
+            this.instantCurtainSafetyTimer = undefined;
+        }
         if (this.instantCurtainTimer !== undefined) {
             window.clearTimeout(this.instantCurtainTimer);
             this.instantCurtainTimer = undefined;
         }
         this.stopGamepadClosePolling();
         this.stopModernHandoffPoll();
+        this.stopPromptWatch();
+        this.promptSuspended = false;
         if (this.instantCurtainTransitionFrame !== undefined) {
             window.cancelAnimationFrame(this.instantCurtainTransitionFrame);
             this.instantCurtainTransitionFrame = undefined;
@@ -2158,6 +2470,9 @@ class PlayButtonLaunchHook {
             curtain.style.transition = "";
             if (!modernHide) curtain.style.opacity = "0";
         }
+        if (clearArtworkImmediately) {
+            this.clearInstantArtwork();
+        }
         if (modernHide) {
             // Transizione morbida curtain->gioco: i contenuti sfumano verso il NERO, breve
             // tenuta sul nero, poi il nero sfuma (a quel punto il gioco e' gia' in primo piano).
@@ -2172,12 +2487,17 @@ class PlayButtonLaunchHook {
             }
             curtains.forEach((curtain) => {
                 curtain.style.visibility = "hidden";
+                curtain.style.display = "none";
                 curtain.ownerDocument?.documentElement?.classList?.remove("launch-curtain-cursor-hidden");
             });
-            this.refreshPreparedFallback();
+            this.clearInstantArtwork();
         }, modernHide ? 1320 : 760);
     }
     destroyInstantCurtain() {
+        if (this.instantCurtainSafetyTimer !== undefined) {
+            window.clearTimeout(this.instantCurtainSafetyTimer);
+            this.instantCurtainSafetyTimer = undefined;
+        }
         if (this.instantCurtainTimer !== undefined) {
             window.clearTimeout(this.instantCurtainTimer);
             this.instantCurtainTimer = undefined;
@@ -2195,6 +2515,12 @@ class PlayButtonLaunchHook {
             try { this.instantCurtainObserversByDocument.get(doc)?.disconnect?.(); } catch (_error) {}
             try { doc.removeEventListener("keydown", this.handleKeyDown, true); } catch (_error) {}
             try { doc.removeEventListener("keyup", this.handleKeyClose, true); } catch (_error) {}
+            try { doc.removeEventListener("pointerdown", this.handlePointerDown, true); } catch (_error) {}
+            try { doc.removeEventListener("mousedown", this.handleMouseDown, true); } catch (_error) {}
+            try { doc.removeEventListener("touchstart", this.handleTouchStart, true); } catch (_error) {}
+            try { doc.removeEventListener("pointerover", this.handlePointerOver, true); } catch (_error) {}
+            try { doc.removeEventListener("focusin", this.handleFocusIn, true); } catch (_error) {}
+            try { doc.removeEventListener("click", this.handleClick, true); } catch (_error) {}
             try { doc.documentElement?.classList?.remove("launch-curtain-cursor-hidden"); } catch (_error) {}
             try { curtain?.remove?.(); } catch (_error) {}
         }
@@ -2203,6 +2529,7 @@ class PlayButtonLaunchHook {
         this.instantCurtainElementsByDocument.clear();
         this.instantCurtainElement = undefined;
         this.instantCurtainVisible = false;
+        this.promptSuspended = false;
         this.activeInstantAppId = undefined;
         this.prearmedInstantAppId = undefined;
         this.prearmLogoToken += 1;
@@ -2328,37 +2655,191 @@ class PlayButtonLaunchHook {
         });
     }
     currentFocusedPlayButton() {
-        const active = document.activeElement;
-        if (active instanceof HTMLElement && this.isPlayButtonEvent(active, [])) {
-            return active;
-        }
-        if (active instanceof HTMLElement) {
-            let parent = active.parentElement;
-            for (let depth = 0; parent && depth < 5; depth += 1) {
-                if (this.isPlayButtonEvent(parent, [])) {
-                    return parent;
+        for (const doc of this.getAllSteamDocuments()) {
+            const active = doc.activeElement;
+            if (this.isElementNode(active) && this.isPlayButtonEvent(active, [])) {
+                return active;
+            }
+            if (this.isElementNode(active)) {
+                let parent = active.parentElement;
+                for (let depth = 0; parent && depth < 5; depth += 1) {
+                    if (this.isPlayButtonEvent(parent, [])) {
+                        return parent;
+                    }
+                    parent = parent.parentElement;
                 }
-                parent = parent.parentElement;
             }
         }
         return undefined;
     }
+    visibleSteamAttentionPrompt() {
+        const selector = this.postPlayPromptSelector();
+        for (const doc of this.getAllSteamDocuments()) {
+            let prompts = [];
+            try {
+                prompts = Array.from(doc.querySelectorAll(selector));
+            }
+            catch (_error) {
+                continue;
+            }
+            for (const prompt of prompts) {
+                if (!this.isElementNode(prompt) || prompt.closest?.("[data-launch-curtain-surface='true']")) {
+                    continue;
+                }
+                const rect = prompt.getBoundingClientRect();
+                const style = doc.defaultView?.getComputedStyle?.(prompt);
+                if (
+                    rect.width < 260
+                    || rect.height < 100
+                    || style?.display === "none"
+                    || style?.visibility === "hidden"
+                    || Number(style?.opacity ?? "1") <= 0.01
+                ) {
+                    continue;
+                }
+                const actions = Array.from(prompt.querySelectorAll('button, [role="button"], [role="menuitem"], [role="option"], [data-focusable="true"]'))
+                    .filter((item) => {
+                        const actionRect = item.getBoundingClientRect();
+                        const actionStyle = doc.defaultView?.getComputedStyle?.(item);
+                        return actionRect.width > 24
+                            && actionRect.height > 20
+                            && actionStyle?.display !== "none"
+                            && actionStyle?.visibility !== "hidden";
+                    });
+                if (actions.length <= 0 || actions.length > 10) {
+                    continue;
+                }
+                const text = (prompt.innerText || prompt.textContent || "").replace(/\s+/g, " ").trim();
+                const labels = actions.flatMap((item) => this.getLabels(item)).join(" ");
+                if (POST_PLAY_CONFIRM_PATTERN.test(`${text} ${labels}`) || (text.length >= 10 && text.length <= 1800 && actions.length <= 4)) {
+                    return { prompt, actions, doc };
+                }
+            }
+        }
+        return undefined;
+    }
+    currentFocusedPostPlayConfirm() {
+        const attention = this.visibleSteamAttentionPrompt();
+        if (!attention) {
+            return undefined;
+        }
+        const active = attention.doc.activeElement;
+        if (this.isElementNode(active) && attention.prompt.contains(active)) {
+            return active;
+        }
+        return attention.actions.find((item) => item.matches?.(":focus, .gpfocus, [data-gpfocus]"))
+            || attention.actions[0];
+    }
+    suspendInstantCurtainForPrompt() {
+        if (!this.instantCurtainVisible || this.promptSuspended) {
+            return;
+        }
+        this.promptSuspended = true;
+        if (this.instantCurtainSafetyTimer !== undefined) {
+            window.clearTimeout(this.instantCurtainSafetyTimer);
+            this.instantCurtainSafetyTimer = undefined;
+        }
+        this.postPlayCoverUntil = Math.max(this.postPlayCoverUntil, Date.now() + POST_PLAY_PROMPT_HOLD_MS);
+        this.instantCurtainVisible = false;
+        this.stopGamepadClosePolling();
+        this.stopModernHandoffPoll();
+        if (this.instantCurtainTimer !== undefined) {
+            window.clearTimeout(this.instantCurtainTimer);
+            this.instantCurtainTimer = undefined;
+        }
+        if (this.instantCurtainTransitionFrame !== undefined) {
+            window.cancelAnimationFrame(this.instantCurtainTransitionFrame);
+            this.instantCurtainTransitionFrame = undefined;
+        }
+        for (const curtain of this.instantCurtains()) {
+            curtain.classList.remove("launch-curtain-instant--art-visible");
+            curtain.style.transition = "none";
+            curtain.style.opacity = "0";
+            curtain.style.visibility = "hidden";
+            curtain.style.display = "none";
+            curtain.ownerDocument?.documentElement?.classList?.remove("launch-curtain-cursor-hidden");
+        }
+        void hideBlackCover().catch(() => {});
+        void setNativePromptVisible({ visible: true }).catch((error) => {
+            console.warn("Launch Curtain could not release focus for the Steam prompt", error);
+        });
+        this.dbg("native Steam attention prompt revealed");
+    }
+    startPromptWatch() {
+        if (this.promptWatchTimer !== undefined) {
+            return;
+        }
+        const poll = () => {
+            this.promptWatchTimer = undefined;
+            if (!this.setupDone) {
+                return;
+            }
+            const attention = this.visibleSteamAttentionPrompt();
+            if (this.promptSuspended && attention) {
+                this.postPlayCoverUntil = Date.now() + POST_PLAY_PROMPT_HOLD_MS;
+            }
+            if (Date.now() > this.postPlayCoverUntil && !this.promptSuspended) {
+                return;
+            }
+            if (this.instantCurtainVisible && attention) {
+                this.suspendInstantCurtainForPrompt();
+            }
+            else if (this.promptSuspended && !attention) {
+                this.dbg("Steam attention prompt dismissed without a launch selection");
+                this.requestCloseAllCurtains();
+                return;
+            }
+            this.promptWatchTimer = window.setTimeout(poll, 120);
+        };
+        this.promptWatchTimer = window.setTimeout(poll, 120);
+    }
+    stopPromptWatch() {
+        if (this.promptWatchTimer !== undefined) {
+            window.clearTimeout(this.promptWatchTimer);
+            this.promptWatchTimer = undefined;
+        }
+    }
     startGamepadLaunchPolling() {
         this.stopGamepadLaunchPolling();
         this.gamepadLaunchPressed = this.gamepadButtonPressed([0]);
+        const initialPlayButton = this.gamepadLaunchPressed ? undefined : this.currentFocusedPlayButton();
+        this.gamepadLaunchArmedButton = initialPlayButton;
+        this.gamepadLaunchArmedAppId = initialPlayButton
+            ? this.findAppIdForEvent(initialPlayButton, this.parentPath(initialPlayButton))
+            : undefined;
         const poll = () => {
             if (!this.setupDone) {
                 return;
             }
             const confirmPressed = this.gamepadButtonPressed([0]);
+            const focusedPlayButton = this.currentFocusedPlayButton();
+            const focusedPlayAppId = focusedPlayButton
+                ? this.findAppIdForEvent(focusedPlayButton, this.parentPath(focusedPlayButton))
+                : undefined;
             if (this.enabled && confirmPressed && !this.gamepadLaunchPressed && !this.instantCurtainVisible) {
-                const focusedPlayButton = this.currentFocusedPlayButton();
-                if (focusedPlayButton) {
+                const wasPlayFocusedBeforePress = Boolean(
+                    focusedPlayButton
+                    && this.gamepadLaunchArmedButton
+                    && (
+                        (focusedPlayAppId && this.gamepadLaunchArmedAppId
+                            ? focusedPlayAppId === this.gamepadLaunchArmedAppId
+                            : focusedPlayButton === this.gamepadLaunchArmedButton)
+                    )
+                );
+                if (focusedPlayButton && wasPlayFocusedBeforePress) {
                     this.handleLaunchInput("play button gamepad", focusedPlayButton, this.parentPath(focusedPlayButton));
                 }
-                else {
-                    this.coverPostPlayInteraction("post-play gamepad", document.activeElement, []);
+                else if (!focusedPlayButton) {
+                    const confirmTarget = this.currentFocusedPostPlayConfirm() || document.activeElement;
+                    const confirmPath = this.parentPath(confirmTarget);
+                    if (!this.cancelPostPlayInteraction("post-play gamepad", confirmTarget, confirmPath)) {
+                        this.coverPostPlayInteraction("post-play gamepad", confirmTarget, confirmPath);
+                    }
                 }
+            }
+            if (!confirmPressed) {
+                this.gamepadLaunchArmedButton = focusedPlayButton;
+                this.gamepadLaunchArmedAppId = focusedPlayAppId;
             }
             this.gamepadLaunchPressed = confirmPressed;
             this.gamepadLaunchTimer = window.setTimeout(poll, 50);
@@ -2371,6 +2852,8 @@ class PlayButtonLaunchHook {
             this.gamepadLaunchTimer = undefined;
         }
         this.gamepadLaunchPressed = false;
+        this.gamepadLaunchArmedButton = undefined;
+        this.gamepadLaunchArmedAppId = undefined;
     }
     startGamepadClosePolling() {
         this.stopGamepadClosePolling();
@@ -2379,6 +2862,7 @@ class PlayButtonLaunchHook {
         this.gamepadCloseOverlayRunning = false;
         this.gamepadCloseStatusCheckedAt = 0;
         this.gamepadCloseIdleSince = 0;
+        this.gamepadClosePending = false;
         const poll = () => {
             const now = Date.now();
             if (now - this.gamepadCloseStatusCheckedAt >= 350) {
@@ -2401,6 +2885,11 @@ class PlayButtonLaunchHook {
             }
             const closePressed = this.gamepadButtonPressed([1]);
             if (closeSurfaceActive && closePressed && !this.gamepadClosePressed && now >= this.gamepadCloseIgnoreUntil) {
+                this.gamepadClosePending = true;
+            }
+            if (this.gamepadClosePending && !closePressed && this.gamepadClosePressed) {
+                this.gamepadClosePending = false;
+                this.dismissInputSuppressionUntil = now + 900;
                 this.requestCloseAllCurtains();
                 return;
             }
@@ -2419,11 +2908,16 @@ class PlayButtonLaunchHook {
         this.gamepadCloseOverlayRunning = false;
         this.gamepadCloseStatusCheckedAt = 0;
         this.gamepadCloseIdleSince = 0;
+        this.gamepadClosePending = false;
     }
     requestCloseAllCurtains() {
+        this.dismissInputSuppressionUntil = Math.max(this.dismissInputSuppressionUntil, Date.now() + 900);
         this.postPlayCoverUntil = 0;
         this.postPlayCoverReadyAt = 0;
-        this.hideInstantCurtain();
+        this.stopPromptWatch();
+        this.promptSuspended = false;
+        void setNativePromptVisible({ visible: false }).catch(() => {});
+        this.hideInstantCurtain(true);
         void hideBlackCover().catch((error) => {
             console.warn("Launch Curtain black pre-cover close failed", error);
         });
@@ -2764,11 +3258,28 @@ function Content() {
         }
     };
     const runPlayStationBulk = async (remove = false) => {
+        const hasExistingCurtain = (game) => {
+            if (remove)
+                return false;
+            const perGame = settings?.per_game?.[String(game.app_id)];
+            return Boolean(String(perGame?.fullscreen_image_path ?? "").trim());
+        };
         const games = collectSteamAppsForCache()
-            .filter((game) => !game.is_shortcut && game.title && !/^App \d+$/i.test(game.title))
+            .filter((game) => (
+                !game.is_shortcut
+                && game.title
+                && !/^App \d+$/i.test(game.title)
+                && (remove || game.is_installed)
+                && !hasExistingCurtain(game)
+            ))
             .sort((a, b) => String(a.title).localeCompare(String(b.title)));
-        if (!games.length)
+        if (!games.length) {
+            toaster.toast({
+                title: strings.toastAttention,
+                body: remove ? strings.playStationBulkError : strings.noInstalledGames
+            });
             return;
+        }
         setBusy(true);
         let applied = 0;
         let skipped = 0;
@@ -2848,7 +3359,7 @@ function Content() {
             SP_JSX.jsx(DFL.DropdownItem, { label: strings.exitDelay ?? I18N.en.exitDelay ?? "Exit delay", rgOptions: exitDelayOptions, selectedOption: selectedExitDelay, disabled: busy || !settings, onChange: (option) => { if (typeof option.data === "number") void setExitDelayValue(option.data); } }),
             playStationBulkStatus ? SP_JSX.jsxs("div", { className: "lcQamStatus", children: [`${playStationBulkStatus.remove ? strings.removingPlayStationAssets : strings.downloadingPlayStationAssets} (${playStationBulkStatus.current}/${playStationBulkStatus.total})`, SP_JSX.jsx("div", { style: { marginTop: 3, fontWeight: 700 }, children: playStationBulkStatus.title })] }) : null,
             SP_JSX.jsxs(DFL.Focusable, { "flow-children": "column", className: "lcQamButtonStack", children: [
-                SP_JSX.jsx(QamButton, { icon: SP_JSX.jsx(FaDownload, {}), disabled: busy || !settings, onClick: () => { void runPlayStationBulk(false); }, children: strings.downloadPlayStationAssets }),
+                SP_JSX.jsx(QamButton, { icon: SP_JSX.jsx(FaDownload, {}), disabled: busy || !settings, onClick: () => { void runPlayStationBulk(false); }, children: strings.downloadPlayStationAssetsInstalled }),
                 SP_JSX.jsx(QamButton, { icon: SP_JSX.jsx(FaTrashAlt, {}), disabled: busy || !settings, onClick: () => { void runPlayStationBulk(true); }, children: strings.removePlayStationAssets })
             ] })
         ] }),
@@ -2887,10 +3398,22 @@ const collectSteamAppsForCache = () => {
         if (!Number.isFinite(appId) || appId <= 0)
             return;
         const overview = getAppOverviewSafe(appId) || entry;
+        let isInstalled = false;
+        try {
+            isInstalled = overview?.BIsInstalled?.() === true;
+        }
+        catch (_error) {}
+        isInstalled = isInstalled
+            || overview?.local_per_client_data?.installed === true
+            || entry?.local_per_client_data?.installed === true
+            || overview?.installed === true
+            || entry?.installed === true
+            || Number(overview?.size_on_disk ?? entry?.size_on_disk ?? 0) > 0;
         byId.set(appId, {
             app_id: appId,
             title: overview?.display_name || overview?.localized_name || overview?.name || entry?.title || `App ${appId}`,
-            is_shortcut: Boolean(overview?.BIsShortcut?.() || overview?.BIsModOrShortcut?.() || Number(overview?.app_type) === 1073741824 || appId >= 2147483648)
+            is_shortcut: Boolean(overview?.BIsShortcut?.() || overview?.BIsModOrShortcut?.() || Number(overview?.app_type) === 1073741824 || appId >= 2147483648),
+            is_installed: isInstalled
         });
     };
     try {
@@ -3580,7 +4103,7 @@ function GameSettingsPage() {
             ] }) })
         ] }),
         SP_JSX.jsx(SettingsCard, { title: strings.downloadBackgrounds || strings.scrapers, description: strings.scrapersHelp, children: SP_JSX.jsxs(SP_REACT.Fragment, { children: [
-            scraperTabs([{ id: "playstation", label: "PlayStation" }, { id: "igdb", label: "IGDB" }, { id: "alphacoders", label: "AlphaCoders" }], activeScraper, (next) => { setActiveScraper(next); setFocusedScraper(""); setImageResults([]); setImageSearchMessage(""); setPlayStationMessage(""); }),
+            scraperTabs([{ id: "playstation", label: "PlayStation" }, { id: "igdb", label: "IGDB" }, { id: "alphacoders", label: "AlphaCoders" }, { id: "nintendo", label: "Nintendo" }, { id: "xbox", label: "Xbox" }], activeScraper, (next) => { setActiveScraper(next); setFocusedScraper(""); setImageResults([]); setImageSearchMessage(""); setPlayStationMessage(""); }),
             scraperContent
         ] }) }),
         SP_JSX.jsx(DFL.DialogButton, { focusable: true, className: "lc-close-button", onClick: () => { try { DFL.Navigation?.NavigateBack?.(); } catch (_error) {} }, children: strings.close || "Close" })
@@ -3883,10 +4406,23 @@ function initSteamControllerClose() {
     const S = (typeof SteamClient !== "undefined") ? SteamClient : (window && window.SteamClient);
     if (!S || !S.Input || typeof S.Input.RegisterForControllerInputMessages !== "function") {
       try { scaLog("RegisterForControllerInputMessages unavailable"); } catch (e) {}
-      return;
+      return function () {};
     }
+    const registryKey = "__playhubLaunchCurtainControllerCleanup";
+    try { if (typeof S.Input[registryKey] === "function") S.Input[registryKey](); } catch (e) {}
+    const release = function (registration) {
+      try {
+        if (typeof registration === "function") registration();
+        else if (registration) {
+          if (typeof registration.Unregister === "function") registration.Unregister();
+          else if (typeof registration.unregister === "function") registration.unregister();
+          else if (typeof registration.Dispose === "function") registration.Dispose();
+          else if (typeof registration.dispose === "function") registration.dispose();
+        }
+      } catch (e) {}
+    };
     let curtainRunning = false, curtainSince = 0, lastDbg = 0;
-    setInterval(function () {
+    const statusTimer = window.setInterval(function () {
       try {
         Promise.resolve(getStatus()).then(function (st) {
           const running = !!(st && st.curtain_running);
@@ -3896,7 +4432,7 @@ function initSteamControllerClose() {
       } catch (e) {}
     }, 700);
     try { scaLog("SC2 close listener registered (status-gated)"); } catch (e) {}
-    S.Input.RegisterForControllerInputMessages(function () {
+    const registration = S.Input.RegisterForControllerInputMessages(function () {
       try {
         const h = playButtonHook;
         const now = Date.now();
@@ -3919,7 +4455,15 @@ function initSteamControllerClose() {
         else hideCurtain();
       } catch (e) {}
     });
+    const cleanup = function () {
+      window.clearInterval(statusTimer);
+      release(registration);
+      try { if (S.Input[registryKey] === cleanup) delete S.Input[registryKey]; } catch (e) {}
+    };
+    S.Input[registryKey] = cleanup;
+    return cleanup;
   } catch (e) {}
+  return function () {};
 }
 
 
@@ -3931,7 +4475,25 @@ function initLaunchInfo() {
     const scaLog = callable("sca_input_diag");
     const strings = getStrings();
     const A = (typeof SteamClient !== "undefined") ? SteamClient : (window && window.SteamClient);
-    if (!A || !A.Apps) { try { scaLog("LAUNCHINFO no SteamClient.Apps"); } catch (e) {} return; }
+    if (!A || !A.Apps) { try { scaLog("LAUNCHINFO no SteamClient.Apps"); } catch (e) {} return function () {}; }
+    const registryKey = "__playhubLaunchCurtainLaunchInfoCleanup";
+    try { if (typeof A.Apps[registryKey] === "function") A.Apps[registryKey](); } catch (e) {}
+    const registrations = [];
+    const keep = function (registration) {
+      if (registration) registrations.push(registration);
+      return registration;
+    };
+    const release = function (registration) {
+      try {
+        if (typeof registration === "function") registration();
+        else if (registration) {
+          if (typeof registration.Unregister === "function") registration.Unregister();
+          else if (typeof registration.unregister === "function") registration.unregister();
+          else if (typeof registration.Dispose === "function") registration.Dispose();
+          else if (typeof registration.dispose === "function") registration.dispose();
+        }
+      } catch (e) {}
+    };
     try { scaLog("LAUNCHINFO GameAction keys=" + Object.keys(A.Apps).filter(function (k) { return /GameAction/i.test(k); }).join(",")); } catch (e) {}
     let logged = 0;
     const dbg = function (t) { try { if (logged < 40) { logged++; scaLog(t); } } catch (e) {} };
@@ -3992,29 +4554,48 @@ function initLaunchInfo() {
       else if (textish) send(humanize(textish));
     };
     if (typeof A.Apps.RegisterForGameActionStart === "function") {
-      A.Apps.RegisterForGameActionStart(function () {
+      keep(A.Apps.RegisterForGameActionStart(function () {
         dbg("GA_START " + JSON.stringify(Array.prototype.slice.call(arguments)));
         send(strings.launchStarting, "start");
-      });
+      }));
     }
     if (typeof A.Apps.RegisterForGameActionTaskChange === "function") {
-      A.Apps.RegisterForGameActionTaskChange(onTask);
+      keep(A.Apps.RegisterForGameActionTaskChange(onTask));
     }
     if (typeof A.Apps.RegisterForGameActionEnd === "function") {
-      A.Apps.RegisterForGameActionEnd(function () {
+      keep(A.Apps.RegisterForGameActionEnd(function () {
         dbg("GA_END " + JSON.stringify(Array.prototype.slice.call(arguments)));
         send(strings.launchWaitingGame, "complete");
-      });
+      }));
     }
     if (typeof A.Apps.RegisterForGameActionShowError === "function") {
-      A.Apps.RegisterForGameActionShowError(function () {
+      keep(A.Apps.RegisterForGameActionShowError(function () {
         dbg("GA_ERR " + JSON.stringify(Array.prototype.slice.call(arguments)));
-      });
+      }));
     }
+    const cleanup = function () {
+      registrations.splice(0).forEach(release);
+      try { if (A.Apps[registryKey] === cleanup) delete A.Apps[registryKey]; } catch (e) {}
+    };
+    A.Apps[registryKey] = cleanup;
+    return cleanup;
   } catch (e) {}
+  return function () {};
 }
 
 
+
+const launchCurtainHookKey = "__playhubLaunchCurtainPlayHook";
+try {
+    const previousHook = globalThis[launchCurtainHookKey];
+    if (previousHook && previousHook !== playButtonHook && typeof previousHook.cleanup === "function") {
+        previousHook.cleanup();
+    }
+}
+catch (error) {
+    console.warn("Launch Curtain could not clean up the previous play hook", error);
+}
+globalThis[launchCurtainHookKey] = playButtonHook;
 
 var index = definePlugin(() => {
     const menuPatch = installLaunchCurtainContextMenu();
@@ -4027,8 +4608,8 @@ var index = definePlugin(() => {
     }
     playButtonHook.setup();
     runSilentStartupGameCacheRefresh();
-    initSteamControllerClose();
-    initLaunchInfo();
+    const controllerCloseCleanup = initSteamControllerClose();
+    const launchInfoCleanup = initLaunchInfo();
     void getSettings().then((settings) => {
         playButtonHook.setEnabled(Boolean(settings.auto_mode));
         playButtonHook.setSettingsCache(settings);
@@ -4047,7 +4628,12 @@ var index = definePlugin(() => {
             try { menuPatch?.unpatch?.(); } catch (error) { console.warn("Launch Curtain context menu unpatch failed", error); }
             try { routerHook?.removeRoute?.(LAUNCH_CURTAIN_EDITOR_ROUTE); } catch (error) { console.warn("Launch Curtain editor route remove failed", error); }
             try { routerHook?.removeRoute?.(LAUNCH_CURTAIN_ROUTE); } catch (error) { console.warn("Launch Curtain route remove failed", error); }
+            try { controllerCloseCleanup?.(); } catch (error) { console.warn("Launch Curtain controller cleanup failed", error); }
+            try { launchInfoCleanup?.(); } catch (error) { console.warn("Launch Curtain launch-info cleanup failed", error); }
             playButtonHook.cleanup();
+            if (globalThis[launchCurtainHookKey] === playButtonHook) {
+                delete globalThis[launchCurtainHookKey];
+            }
             console.log("Launch Curtain unloaded");
         }
     };

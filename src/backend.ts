@@ -8,6 +8,7 @@ const debugLog = callable("debug_log");
 const hideCurtain = callable("hide_curtain");
 const showBlackCover = callable("show_black_cover");
 const hideBlackCover = callable("hide_black_cover");
+const setNativePromptVisible = callable("set_native_prompt_visible");
 const launchRequested = callable("launch_requested");
 const resolveGameLogo = callable("resolve_game_logo");
 const getGameSettings = callable("get_game_settings");
@@ -27,4 +28,4 @@ const startAutoMode = callable("start_auto_mode");
 const stopAutoMode = callable("stop_auto_mode");
 const FILE_SELECTION_FILE = 0;
 
-export { getSettings, saveSettings, getStatus, debugLog, hideCurtain, showBlackCover, hideBlackCover, launchRequested, resolveGameLogo, getGameSettings, saveGameSettings, resetGameSettings, validateLaunchImagePath, getImagePreview, searchPlayStationGames, getPlayStationBackgrounds, applyPlayStationAsset, removePlayStationAsset, searchGoogleImages, downloadGoogleImage, buildGameCache, cleanupUnusedLaunchImages, startAutoMode, stopAutoMode, FILE_SELECTION_FILE };
+export { getSettings, saveSettings, getStatus, debugLog, hideCurtain, showBlackCover, hideBlackCover, setNativePromptVisible, launchRequested, resolveGameLogo, getGameSettings, saveGameSettings, resetGameSettings, validateLaunchImagePath, getImagePreview, searchPlayStationGames, getPlayStationBackgrounds, applyPlayStationAsset, removePlayStationAsset, searchGoogleImages, downloadGoogleImage, buildGameCache, cleanupUnusedLaunchImages, startAutoMode, stopAutoMode, FILE_SELECTION_FILE };

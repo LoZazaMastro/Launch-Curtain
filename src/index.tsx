@@ -6,6 +6,18 @@ import { Content, GameSettingsPage, LogoEditorPage, installLaunchCurtainContextM
 import { initSteamControllerClose } from "./steamControllerClose";
 import { initLaunchInfo } from "./launchInfo";
 
+const launchCurtainHookKey = "__playhubLaunchCurtainPlayHook";
+try {
+    const previousHook = globalThis[launchCurtainHookKey];
+    if (previousHook && previousHook !== playButtonHook && typeof previousHook.cleanup === "function") {
+        previousHook.cleanup();
+    }
+}
+catch (error) {
+    console.warn("Launch Curtain could not clean up the previous play hook", error);
+}
+globalThis[launchCurtainHookKey] = playButtonHook;
+
 var index = definePlugin(() => {
     const menuPatch = installLaunchCurtainContextMenu();
     try {
@@ -17,8 +29,8 @@ var index = definePlugin(() => {
     }
     playButtonHook.setup();
     runSilentStartupGameCacheRefresh();
-    initSteamControllerClose();
-    initLaunchInfo();
+    const controllerCloseCleanup = initSteamControllerClose();
+    const launchInfoCleanup = initLaunchInfo();
     void getSettings().then((settings) => {
         playButtonHook.setEnabled(Boolean(settings.auto_mode));
         playButtonHook.setSettingsCache(settings);
@@ -37,7 +49,12 @@ var index = definePlugin(() => {
             try { menuPatch?.unpatch?.(); } catch (error) { console.warn("Launch Curtain context menu unpatch failed", error); }
             try { routerHook?.removeRoute?.(LAUNCH_CURTAIN_EDITOR_ROUTE); } catch (error) { console.warn("Launch Curtain editor route remove failed", error); }
             try { routerHook?.removeRoute?.(LAUNCH_CURTAIN_ROUTE); } catch (error) { console.warn("Launch Curtain route remove failed", error); }
+            try { controllerCloseCleanup?.(); } catch (error) { console.warn("Launch Curtain controller cleanup failed", error); }
+            try { launchInfoCleanup?.(); } catch (error) { console.warn("Launch Curtain launch-info cleanup failed", error); }
             playButtonHook.cleanup();
+            if (globalThis[launchCurtainHookKey] === playButtonHook) {
+                delete globalThis[launchCurtainHookKey];
+            }
             console.log("Launch Curtain unloaded");
         }
     };
