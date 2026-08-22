@@ -10,6 +10,9 @@ param(
     [int]$LogoScale = 100,
     [string]$BackdropImage = "",
     [int]$BackdropOpacity = 100,
+    [int]$BackdropPositionX = 50,
+    [int]$BackdropPositionY = 50,
+    [int]$BackdropScale = 100,
     [int]$LogoShadowOpacity = 0,
     [int]$LogoShadowBlur = 40,
     [string]$BgZoom = "0",
@@ -46,12 +49,17 @@ $logoPositionXPct = [Math]::Max(0, [Math]::Min(100, $LogoPositionX))
 $logoPositionYPct = [Math]::Max(0, [Math]::Min(100, $LogoPositionY))
 $logoScaleFactor = [Math]::Max(0.5, [Math]::Min(2.0, $LogoScale / 100.0))
 $backdropOpacityFactor = [Math]::Max(0.0, [Math]::Min(1.0, $BackdropOpacity / 100.0))
+$backdropScaleFactor = [Math]::Max(1.0, [Math]::Min(2.0, $BackdropScale / 100.0))
+# Backdrop X/Y are normalized pan coordinates. Their real travel depends on
+# the source aspect ratio and is calculated after the bitmap is loaded.
+$backdropPositionXPct = [Math]::Max(0.0, [Math]::Min(100.0, $BackdropPositionX))
+$backdropPositionYPct = [Math]::Max(0.0, [Math]::Min(100.0, $BackdropPositionY))
 $logoShadowOpacityFactor = [Math]::Max(0.0, [Math]::Min(1.0, $LogoShadowOpacity / 100.0))
 $logoShadowBlurRadius = [Math]::Max(1.0, 3.0 + ($LogoShadowBlur / 100.0) * 55.0)
 $bgZoomEnabled = ([string]$BgZoom).Trim() -eq "1"
 $launchInfoEnabled = (([string]$ShowLaunchInfo).Trim() -eq "1") -and (-not [string]::IsNullOrEmpty($LaunchInfoPath))
 
-Write-OverlayLog "Overlay script starting timeout=$Timeout logo=$Logo showLogo=$showLogoEnabled zoomLogo=$zoomLogoEnabled logoPosition=$logoPositionXPct,$logoPositionYPct logoScale=$LogoScale logoShadow=$LogoShadowOpacity backdrop=$BackdropImage backdropOpacity=$BackdropOpacity preCoverCommandPath=$PreCoverCommandPath"
+Write-OverlayLog "Overlay script starting timeout=$Timeout logo=$Logo showLogo=$showLogoEnabled zoomLogo=$zoomLogoEnabled logoPosition=$logoPositionXPct,$logoPositionYPct logoScale=$LogoScale logoShadow=$LogoShadowOpacity backdrop=$BackdropImage backdropOpacity=$BackdropOpacity backdropPosition=$backdropPositionXPct,$backdropPositionYPct backdropScale=$BackdropScale preCoverCommandPath=$PreCoverCommandPath"
 
 function Hide-BlackPreCover {
     if (-not $PreCoverCommandPath) {
@@ -251,14 +259,54 @@ $root.Opacity = 1
 $window.Content = $root
 
 $backdrop = New-Object System.Windows.Controls.Image
-$backdrop.Stretch = [System.Windows.Media.Stretch]::UniformToFill
+$backdrop.Stretch = [System.Windows.Media.Stretch]::Fill
 $backdrop.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Center
 $backdrop.VerticalAlignment = [System.Windows.VerticalAlignment]::Center
 $backdrop.Width = $screenWidth
 $backdrop.Height = $screenHeight
 $backdrop.Opacity = 0
 $backdrop.Cursor = $hiddenCursor
+$backdrop.RenderTransformOrigin = New-Object System.Windows.Point 0.5, 0.5
+$backdropTransformGroup = New-Object System.Windows.Media.TransformGroup
+$backdropScaleTransform = New-Object System.Windows.Media.ScaleTransform
+$backdropScaleTransform.ScaleX = $backdropScaleFactor
+$backdropScaleTransform.ScaleY = $backdropScaleFactor
+$backdropTranslateTransform = New-Object System.Windows.Media.TranslateTransform
+$backdropTranslateTransform.X = 0
+$backdropTranslateTransform.Y = 0
+$backdropTransformGroup.Children.Add($backdropScaleTransform) | Out-Null
+$backdropTransformGroup.Children.Add($backdropTranslateTransform) | Out-Null
+$backdrop.RenderTransform = $backdropTransformGroup
 $root.Children.Add($backdrop) | Out-Null
+
+function Update-BackdropPlacement {
+    param([System.Windows.Media.Imaging.BitmapSource]$Bitmap)
+
+    if (-not $Bitmap -or $Bitmap.PixelWidth -le 0 -or $Bitmap.PixelHeight -le 0) {
+        return
+    }
+
+    $screenAspect = $screenWidth / [Math]::Max(1.0, $screenHeight)
+    $imageAspect = $Bitmap.PixelWidth / [Math]::Max(1.0, $Bitmap.PixelHeight)
+    if ($imageAspect -gt $screenAspect) {
+        $baseHeight = $screenHeight
+        $baseWidth = $screenHeight * $imageAspect
+    }
+    else {
+        $baseWidth = $screenWidth
+        $baseHeight = $screenWidth / [Math]::Max(0.0001, $imageAspect)
+    }
+
+    $backdrop.Width = $baseWidth
+    $backdrop.Height = $baseHeight
+    $scaledWidth = $baseWidth * $backdropScaleFactor
+    $scaledHeight = $baseHeight * $backdropScaleFactor
+    $xTravel = [Math]::Max(0.0, ($scaledWidth - $screenWidth) / 2.0)
+    $yTravel = [Math]::Max(0.0, ($scaledHeight - $screenHeight) / 2.0)
+    $backdropTranslateTransform.X = (($backdropPositionXPct - 50.0) / 50.0) * $xTravel
+    $backdropTranslateTransform.Y = (($backdropPositionYPct - 50.0) / 50.0) * $yTravel
+}
+
 
 $logoLayer = New-Object System.Windows.Controls.Canvas
 $logoLayer.Width = $screenWidth
@@ -417,6 +465,7 @@ function Load-BackdropVisual {
             return
         }
         $backdrop.Source = $bitmap
+        Update-BackdropPlacement -Bitmap $bitmap
         [System.Windows.Media.RenderOptions]::SetBitmapScalingMode($backdrop, [System.Windows.Media.BitmapScalingMode]::HighQuality)
         $bdFade = New-Object System.Windows.Media.Animation.DoubleAnimation
         $bdFade.From = 0
@@ -424,17 +473,12 @@ function Load-BackdropVisual {
         $bdFade.Duration = New-Object System.Windows.Duration ([TimeSpan]::FromMilliseconds(500))
         $backdrop.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $bdFade)
         if ($bgZoomEnabled) {
-            $bdScale = New-Object System.Windows.Media.ScaleTransform
-            $bdScale.ScaleX = 1.05
-            $bdScale.ScaleY = 1.05
-            $backdrop.RenderTransformOrigin = New-Object System.Windows.Point 0.5, 0.5
-            $backdrop.RenderTransform = $bdScale
             $bgZoomAnim = New-Object System.Windows.Media.Animation.DoubleAnimation
-            $bgZoomAnim.From = 1.05
-            $bgZoomAnim.To = 1.0
+            $bgZoomAnim.From = ($backdropScaleFactor * 1.05)
+            $bgZoomAnim.To = $backdropScaleFactor
             $bgZoomAnim.Duration = New-Object System.Windows.Duration ([TimeSpan]::FromSeconds(12))
-            $bdScale.BeginAnimation([System.Windows.Media.ScaleTransform]::ScaleXProperty, $bgZoomAnim)
-            $bdScale.BeginAnimation([System.Windows.Media.ScaleTransform]::ScaleYProperty, $bgZoomAnim)
+            $backdropScaleTransform.BeginAnimation([System.Windows.Media.ScaleTransform]::ScaleXProperty, $bgZoomAnim)
+            $backdropScaleTransform.BeginAnimation([System.Windows.Media.ScaleTransform]::ScaleYProperty, $bgZoomAnim)
         }
         Write-OverlayLog "Backdrop loaded from $BackdropImage (immediate)"
     }

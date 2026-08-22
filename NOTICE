@@ -18,3 +18,33 @@ the current PlayStation Store markup.
     Copyright (c) 2022 XenorPLxx
     Licensed under the MIT License.
     https://github.com/XenorPLxx/playnite-metadata-psn-universal
+
+iiSU Database (iiDB) integration
+--------------------------------
+Special thanks to the iiSU team and community for creating iiDB and for the incredible
+work behind its growing collection of game artwork and soundbites. Their passion for
+presentation, preservation, and beautifully curated game assets has made Launch
+Curtain's iiDB integration possible. Huge thanks for building such a valuable resource
+for the gaming community and for making these assets accessible to projects like this one.
+
+Launch Curtain can search and download game artwork and Soundbites from the iiSU
+Database (iiDB), operated by iiSU Network. iiSU/iiDB content remains subject to
+the iiSU Network license and attribution requirements.
+
+    iiSU Network / iiSU Database (iiDB)
+    https://iisu.network/
+    License: https://iisu.network/license
+
+Launch Curtain's MIT license does not relicense third-party iiSU/iiDB content.
+
+SteamGridDB Hero integration
+----------------------------
+Launch Curtain can query Hero artwork through the public SteamGridDB API v2 using
+a personal API key supplied by the user. Launch Curtain does not bundle an API key.
+SteamGridDB artwork and service content are third-party content and are not relicensed
+by Launch Curtain.
+
+    SteamGridDB
+    https://www.steamgriddb.com/
+    API: https://www.steamgriddb.com/api/v2
+    Terms: https://www.steamgriddb.com/terms

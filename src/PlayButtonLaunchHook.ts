@@ -1,5 +1,5 @@
 import { PLAY_LABELS, BLOCKED_PLAY_LABEL_HINTS, PROBATION_COVER_MS, LAUNCH_BRIDGE_COVER_MS, CONFIRMED_LAUNCH_COVER_MS, POST_PLAY_CONFIRM_COVER_MS, POST_PLAY_ARM_MS, POST_PLAY_CONFIRM_PATTERN, POST_PLAY_CANCEL_PATTERN } from "./constants";
-import { debugLog, getImagePreview, getStatus, hideBlackCover, hideCurtain, launchRequested, resolveGameLogo, setNativePromptVisible, showBlackCover } from "./backend";
+import { debugLog, getImagePreview, getSoundbitePreview, getStatus, hideBlackCover, hideCurtain, launchRequested, resolveGameLogo, setNativePromptVisible, showBlackCover, soundbiteRuntimeFinished, soundbiteRuntimeStarted } from "./backend";
 
 const POST_PLAY_PROMPT_HOLD_MS = 5 * 60 * 1000;
 const MODERN_FAIL_OPEN_MS = 75 * 1000;
@@ -23,6 +23,7 @@ class PlayButtonLaunchHook {
         this.instantCurtainExpiresAt = 0;
         this.instantCurtainSafetyTimer = undefined;
         this.instantCurtainVisible = false;
+        this.modernFadeToBlackActive = false;
         this.backendLaunchToken = 0;
         this.prearmLogoToken = 0;
         this.gamepadClosePressed = false;
@@ -50,6 +51,13 @@ class PlayButtonLaunchHook {
         this.currentBackdropSource = "";
         this.currentBackdropResolvedUrl = "";
         this.currentBackdropOpacity = 0;
+        this.runtimeSoundbiteAudio = null;
+        this.runtimeSoundbiteToken = "";
+        this.runtimeSoundbiteAppId = 0;
+        this.runtimeSoundbitePath = "";
+        this.runtimeSoundbiteStarting = false;
+        this.runtimeSoundbiteStartedLocally = false;
+        this.runtimeSoundbiteFinishedBeforeBind = null;
         this.instantAnimationEpoch = 0;
         this.instantAnimationStartedAt = 0;
         this.gameRunning = false;
@@ -186,6 +194,7 @@ class PlayButtonLaunchHook {
         this.unregisterSteamPopupHooks();
         this.stopGamepadLaunchPolling();
         this.stopArmPoll();
+        this.stopRuntimeSoundbite("hook cleanup");
         this.hideInstantCurtain();
         void setNativePromptVisible({ visible: false }).catch(() => {});
         void hideBlackCover().catch((error) => {
@@ -211,6 +220,7 @@ class PlayButtonLaunchHook {
     setEnabled(enabled) {
         this.enabled = enabled;
         if (!enabled) {
+            this.stopRuntimeSoundbite("hook disabled");
             this.hideInstantCurtain();
         }
     }
@@ -246,13 +256,18 @@ class PlayButtonLaunchHook {
             logo_scale: typeof raw.logo_scale === "number" ? raw.logo_scale : 100,
             fullscreen_image_path: raw.fullscreen_image_path || "",
             background_opacity: typeof raw.background_opacity === "number" ? raw.background_opacity : undefined,
+            background_position_x: typeof raw.background_position_x === "number" ? raw.background_position_x : (typeof this.settingsCache?.background_position_x === "number" ? this.settingsCache.background_position_x : 50),
+            background_position_y: typeof raw.background_position_y === "number" ? raw.background_position_y : (typeof this.settingsCache?.background_position_y === "number" ? this.settingsCache.background_position_y : 50),
+            background_scale: typeof raw.background_scale === "number" ? raw.background_scale : (typeof this.settingsCache?.background_scale === "number" ? this.settingsCache.background_scale : 100),
             logo_shadow_opacity: typeof raw.logo_shadow_opacity === "number" ? raw.logo_shadow_opacity : undefined,
             logo_shadow_blur: typeof raw.logo_shadow_blur === "number" ? raw.logo_shadow_blur : undefined,
             bg_zoom_enabled: typeof raw.bg_zoom_enabled === "boolean" ? raw.bg_zoom_enabled : ((this.settingsCache && this.settingsCache.bg_zoom_enabled) !== false),
             force_mode: (raw.force_mode === "classic" || raw.force_mode === "modern") ? raw.force_mode : "auto",
             timeout_enabled: typeof raw.timeout_enabled === "boolean" ? raw.timeout_enabled : undefined,
             timeout_seconds: typeof raw.timeout_seconds === "number" ? raw.timeout_seconds : undefined,
-            exit_delay_seconds: typeof raw.exit_delay_seconds === "number" ? raw.exit_delay_seconds : undefined
+            exit_delay_seconds: typeof raw.exit_delay_seconds === "number" ? raw.exit_delay_seconds : undefined,
+            soundbite_path: raw.soundbite_path || "",
+            soundbite_volume: typeof raw.soundbite_volume === "number" ? raw.soundbite_volume : 100
         };
     }
     isGameEnabled(appId) {
@@ -891,11 +906,229 @@ class PlayButtonLaunchHook {
         this.startPromptWatch();
         const effectiveShortcut = isShortcut || Boolean(appId && appId >= 2147483648);
         const effectiveLogoSource = gameSettings.show_logo === false ? undefined : logoSource;
+        if (confirmedLaunch && appId && gameSettings.soundbite_path) {
+            void this.startRuntimeSoundbiteEarly(appId, gameSettings);
+        }
         if (confirmedLaunch) {
             this.showNativeBlackCover(`${reason} confirmed black handoff`, CONFIRMED_LAUNCH_COVER_MS);
         }
         this.showInstantCurtain(appId, effectiveLogoSource, effectiveShortcut, gameSettings.show_logo !== false, confirmedLaunch ? Math.min(CONFIRMED_LAUNCH_COVER_MS, 4200) : PROBATION_COVER_MS);
         this.scheduleBackendLaunch(reason, appId, effectiveLogoSource, 0, effectiveShortcut, confirmedLaunch);
+    }
+    stopRuntimeSoundbite(reason = "stop", notifyBackend = true) {
+        const audio = this.runtimeSoundbiteAudio;
+        const token = this.runtimeSoundbiteToken;
+        const appId = this.runtimeSoundbiteAppId;
+        this.runtimeSoundbiteAudio = null;
+        this.runtimeSoundbiteToken = "";
+        this.runtimeSoundbiteAppId = 0;
+        this.runtimeSoundbitePath = "";
+        this.runtimeSoundbiteStarting = false;
+        this.runtimeSoundbiteStartedLocally = false;
+        this.runtimeSoundbiteFinishedBeforeBind = null;
+        if (audio) {
+            try {
+                audio.onended = null;
+                audio.onerror = null;
+                audio.pause?.();
+                audio.currentTime = 0;
+            }
+            catch (_error) {}
+        }
+        if (notifyBackend && token) {
+            void soundbiteRuntimeFinished({ app_id: appId || 0, token, status: "stopped", reason }).catch(() => {});
+        }
+    }
+    effectiveRuntimeSoundbiteVolume(gameSettings = {}) {
+        const perGame = Math.max(0, Math.min(100, Number(gameSettings.soundbite_volume ?? 100)));
+        const master = Math.max(0, Math.min(100, Number(this.settingsCache?.soundbite_master_volume ?? 100)));
+        const volume = (perGame / 100) * (master / 100);
+        return Number.isFinite(volume) ? Math.max(0, Math.min(1, volume)) : 1;
+    }
+    async startRuntimeSoundbiteEarly(appId, gameSettings = {}) {
+        const path = String(gameSettings.soundbite_path || "").trim();
+        if (!path || !appId) return;
+        if (this.runtimeSoundbiteAppId === appId
+            && this.runtimeSoundbitePath === path
+            && (this.runtimeSoundbiteAudio || this.runtimeSoundbiteStarting)) {
+            return;
+        }
+
+        this.stopRuntimeSoundbite("replaced by confirmed launch", true);
+        this.runtimeSoundbiteAppId = appId;
+        this.runtimeSoundbitePath = path;
+        this.runtimeSoundbiteToken = "";
+        this.runtimeSoundbiteStarting = true;
+        this.runtimeSoundbiteStartedLocally = false;
+        this.runtimeSoundbiteFinishedBeforeBind = null;
+        try {
+            const preview = await getSoundbitePreview({ source: path });
+            if (this.runtimeSoundbiteAppId !== appId || this.runtimeSoundbitePath !== path) return;
+            if (!preview?.ok || !preview?.url) {
+                const token = this.runtimeSoundbiteToken;
+                this.runtimeSoundbiteStarting = false;
+                if (token) {
+                    void soundbiteRuntimeFinished({ app_id: appId, token, status: "error", reason: preview?.message || "preview unavailable" }).catch(() => {});
+                }
+                this.runtimeSoundbiteToken = "";
+                this.runtimeSoundbiteAppId = 0;
+                this.runtimeSoundbitePath = "";
+                this.runtimeSoundbiteFinishedBeforeBind = token ? null : { status: "error", reason: preview?.message || "preview unavailable" };
+                this.dbg(`early runtime Soundbite preview failed appId=${appId}`);
+                return;
+            }
+            const audio = new Audio(preview.url);
+            audio.volume = this.effectiveRuntimeSoundbiteVolume(gameSettings);
+            audio.preload = "auto";
+            this.runtimeSoundbiteAudio = audio;
+            this.runtimeSoundbiteStarting = false;
+
+            const finish = (status, reason) => {
+                if (this.runtimeSoundbiteAppId !== appId || this.runtimeSoundbitePath !== path) return;
+                this.runtimeSoundbiteAudio = null;
+                this.runtimeSoundbiteStarting = false;
+                const token = this.runtimeSoundbiteToken;
+                if (token) {
+                    void soundbiteRuntimeFinished({ app_id: appId, token, status, reason }).catch(() => {});
+                    this.runtimeSoundbiteToken = "";
+                    this.runtimeSoundbiteAppId = 0;
+                    this.runtimeSoundbitePath = "";
+                    this.runtimeSoundbiteStartedLocally = false;
+                    this.runtimeSoundbiteFinishedBeforeBind = null;
+                }
+                else {
+                    this.runtimeSoundbiteFinishedBeforeBind = { status, reason };
+                }
+                this.dbg(`early runtime Soundbite ${status} appId=${appId}`);
+            };
+            audio.onended = () => finish("finished", "ended");
+            audio.onerror = () => finish("error", "HTMLAudioElement error");
+            await audio.play();
+            if (this.runtimeSoundbiteAppId !== appId || this.runtimeSoundbitePath !== path) {
+                try { audio.pause?.(); } catch (_error) {}
+                return;
+            }
+            this.runtimeSoundbiteStartedLocally = true;
+            if (this.runtimeSoundbiteToken) {
+                void soundbiteRuntimeStarted({ app_id: appId, token: this.runtimeSoundbiteToken }).catch(() => {});
+            }
+            this.dbg(`runtime Soundbite started early in Steam Chromium appId=${appId} volume=${audio.volume.toFixed(3)}`);
+        }
+        catch (error) {
+            if (this.runtimeSoundbiteAppId === appId && this.runtimeSoundbitePath === path) {
+                const message = String(error?.message || error || "browser playback failed");
+                this.runtimeSoundbiteAudio = null;
+                this.runtimeSoundbiteStarting = false;
+                this.runtimeSoundbiteStartedLocally = false;
+                if (this.runtimeSoundbiteToken) {
+                    void soundbiteRuntimeFinished({ app_id: appId, token: this.runtimeSoundbiteToken, status: "error", reason: message }).catch(() => {});
+                    this.runtimeSoundbiteToken = "";
+                    this.runtimeSoundbiteAppId = 0;
+                    this.runtimeSoundbitePath = "";
+                }
+                else {
+                    this.runtimeSoundbiteFinishedBeforeBind = { status: "error", reason: message };
+                }
+                this.dbg(`early runtime Soundbite failed appId=${appId} error=${message}`);
+            }
+        }
+    }
+    async startRuntimeSoundbite(launchResult, fallbackAppId = 0) {
+        const path = String(launchResult?.soundbite_path || "").trim();
+        const token = String(launchResult?.soundbite_token || "").trim();
+        const appId = Number(launchResult?.soundbite_app_id || fallbackAppId || 0) || 0;
+        if (!path || !token) return;
+
+        // If Chromium already started the Soundbite on Steam's confirmed RunGame
+        // signal, bind the backend token to that same playback instead of restarting it.
+        if (this.runtimeSoundbiteAppId === appId && this.runtimeSoundbitePath === path) {
+            this.runtimeSoundbiteToken = token;
+            if (this.runtimeSoundbiteAudio) {
+                const volume = Math.max(0, Math.min(1, Number(launchResult?.soundbite_effective_volume ?? this.runtimeSoundbiteAudio.volume ?? 1)));
+                if (Number.isFinite(volume)) this.runtimeSoundbiteAudio.volume = volume;
+            }
+            if (this.runtimeSoundbiteStartedLocally) {
+                void soundbiteRuntimeStarted({ app_id: appId, token }).catch(() => {});
+            }
+            if (this.runtimeSoundbiteFinishedBeforeBind) {
+                const finished = this.runtimeSoundbiteFinishedBeforeBind;
+                void soundbiteRuntimeFinished({ app_id: appId, token, status: finished.status, reason: finished.reason }).catch(() => {});
+                this.runtimeSoundbiteToken = "";
+                this.runtimeSoundbiteAppId = 0;
+                this.runtimeSoundbitePath = "";
+                this.runtimeSoundbiteStarting = false;
+                this.runtimeSoundbiteStartedLocally = false;
+                this.runtimeSoundbiteFinishedBeforeBind = null;
+            }
+            this.dbg(`runtime Soundbite bound to early playback appId=${appId}`);
+            return;
+        }
+
+        if (this.runtimeSoundbiteToken === token && (this.runtimeSoundbiteAudio || this.runtimeSoundbiteStarting)) return;
+        this.stopRuntimeSoundbite("replaced by new launch", true);
+        this.runtimeSoundbiteToken = token;
+        this.runtimeSoundbiteAppId = appId;
+        this.runtimeSoundbitePath = path;
+        this.runtimeSoundbiteStarting = true;
+        this.runtimeSoundbiteStartedLocally = false;
+        this.runtimeSoundbiteFinishedBeforeBind = null;
+        try {
+            const preview = await getSoundbitePreview({ source: path });
+            if (this.runtimeSoundbiteToken !== token) return;
+            if (!preview?.ok || !preview?.url) {
+                this.dbg(`runtime Soundbite preview failed appId=${appId} token=${token}`);
+                this.runtimeSoundbiteStarting = false;
+                void soundbiteRuntimeFinished({ app_id: appId, token, status: "error", reason: preview?.message || "preview unavailable" }).catch(() => {});
+                this.runtimeSoundbiteToken = "";
+                this.runtimeSoundbiteAppId = 0;
+                this.runtimeSoundbitePath = "";
+                return;
+            }
+
+            const audio = new Audio(preview.url);
+            const volume = Math.max(0, Math.min(1, Number(launchResult?.soundbite_effective_volume ?? 1)));
+            audio.volume = Number.isFinite(volume) ? volume : 1;
+            audio.preload = "auto";
+            this.runtimeSoundbiteAudio = audio;
+            this.runtimeSoundbiteStarting = false;
+
+            const finish = (status, reason) => {
+                if (this.runtimeSoundbiteToken !== token) return;
+                this.runtimeSoundbiteAudio = null;
+                this.runtimeSoundbiteToken = "";
+                this.runtimeSoundbiteAppId = 0;
+                this.runtimeSoundbitePath = "";
+                this.runtimeSoundbiteStarting = false;
+                this.runtimeSoundbiteStartedLocally = false;
+                this.runtimeSoundbiteFinishedBeforeBind = null;
+                void soundbiteRuntimeFinished({ app_id: appId, token, status, reason }).catch(() => {});
+                this.dbg(`runtime Soundbite ${status} appId=${appId}`);
+            };
+            audio.onended = () => finish("finished", "ended");
+            audio.onerror = () => finish("error", "HTMLAudioElement error");
+            void soundbiteRuntimeStarted({ app_id: appId, token }).catch(() => {});
+            await audio.play();
+            if (this.runtimeSoundbiteToken !== token) {
+                try { audio.pause?.(); } catch (_error) {}
+                return;
+            }
+            this.runtimeSoundbiteStartedLocally = true;
+            this.dbg(`runtime Soundbite started in Steam Chromium appId=${appId} volume=${audio.volume.toFixed(3)}`);
+        }
+        catch (error) {
+            if (this.runtimeSoundbiteToken === token) {
+                const message = String(error?.message || error || "browser playback failed");
+                this.runtimeSoundbiteAudio = null;
+                this.runtimeSoundbiteToken = "";
+                this.runtimeSoundbiteAppId = 0;
+                this.runtimeSoundbitePath = "";
+                this.runtimeSoundbiteStarting = false;
+                this.runtimeSoundbiteStartedLocally = false;
+                this.runtimeSoundbiteFinishedBeforeBind = null;
+                void soundbiteRuntimeFinished({ app_id: appId, token, status: "error", reason: message }).catch(() => {});
+                this.dbg(`runtime Soundbite failed appId=${appId} error=${message}`);
+            }
+        }
     }
     scheduleBackendLaunch(reason, appId, logoSource, delayMs = 0, isShortcut = false, confirmedLaunch = false) {
         this.clearPendingBackendLaunch();
@@ -919,7 +1152,12 @@ class PlayButtonLaunchHook {
             if (resolvedLogoSource) {
                 request.logo_source = resolvedLogoSource;
             }
-            void launchRequested(request).catch((error) => {
+            void launchRequested(request).then((result) => {
+                if (token !== this.backendLaunchToken) return;
+                if (result?.ok && result?.soundbite_path && result?.soundbite_token) {
+                    void this.startRuntimeSoundbite(result, appId || 0);
+                }
+            }).catch((error) => {
                 console.warn("Launch Curtain play hook failed", error);
             });
         };
@@ -1273,14 +1511,28 @@ class PlayButtonLaunchHook {
           display: block;
         }
         .launch-curtain-instant__backdrop {
-          position: absolute; inset: 0; width: 100%; height: 100%;
-          object-fit: cover; opacity: 0; z-index: 0; pointer-events: none;
+          position: absolute; left: 50%; top: 50%; width: 100%; height: 100%;
+          max-width: none; max-height: none; object-fit: fill; opacity: 0; z-index: 0; pointer-events: none;
+          transform-origin: center center;
+          transform: translate(-50%, -50%) scale(var(--lc-backdrop-scale, 1));
           transition: opacity 550ms ease;
         }
         .launch-curtain-instant--art-visible .launch-curtain-instant__backdrop {
           opacity: var(--lc-backdrop-opacity, 1);
         }
-        @keyframes launch-curtain-bg-zoom { from { transform: scale(1.06); } to { transform: scale(1); } }
+        /* Modern close: keep the surface itself fully black while artwork, logo
+           and status fade into it. After 500 ms the black surface is removed,
+           revealing the already-focused game. */
+        .launch-curtain-instant--closing .launch-curtain-instant__backdrop,
+        .launch-curtain-instant--closing .launch-curtain-instant__stack,
+        .launch-curtain-instant--closing .launch-curtain-instant__status {
+          opacity: 0 !important;
+          transition: opacity 500ms ease !important;
+        }
+        @keyframes launch-curtain-bg-zoom {
+          from { transform: translate(-50%, -50%) scale(calc(var(--lc-backdrop-scale, 1) * 1.06)); }
+          to { transform: translate(-50%, -50%) scale(var(--lc-backdrop-scale, 1)); }
+        }
         .launch-curtain-instant__backdrop--zoom {
           animation: launch-curtain-bg-zoom 12s ease-out forwards;
           transform-origin: center center;
@@ -1478,6 +1730,7 @@ class PlayButtonLaunchHook {
                 const wasGameRunning = this.gameRunning;
                 this.gameRunning = !!(st && st.game_running);
                 if (wasGameRunning && !this.gameRunning) {
+                    this.stopRuntimeSoundbite("game exit observed");
                     this.suppressPrearmUntil = Date.now() + 8000;
                     if (this.instantCurtainVisible) {
                         this.hideInstantCurtain(true);
@@ -1548,9 +1801,44 @@ class PlayButtonLaunchHook {
             }
         }
     }
+    applyInstantBackdropPlacement(appId) {
+        const gs = this.gameSettingsForApp(appId);
+        const scalePercent = Math.max(100, Math.min(200, Number(gs.background_scale ?? 100)));
+        const panX = Math.max(0, Math.min(100, Number(gs.background_position_x ?? 50)));
+        const panY = Math.max(0, Math.min(100, Number(gs.background_position_y ?? 50)));
+        const scale = scalePercent / 100;
+        for (const curtain of this.instantCurtains()) {
+            const img = curtain.querySelector(".launch-curtain-instant__backdrop");
+            if (!img) continue;
+            const rect = curtain.getBoundingClientRect?.();
+            const viewportAspect = rect && rect.width > 0 && rect.height > 0 ? rect.width / rect.height : (16 / 9);
+            const imageAspect = img.naturalWidth > 0 && img.naturalHeight > 0 ? img.naturalWidth / img.naturalHeight : viewportAspect;
+            let baseWidth = 100;
+            let baseHeight = 100;
+            if (imageAspect > viewportAspect)
+                baseWidth = (imageAspect / viewportAspect) * 100;
+            else if (imageAspect < viewportAspect)
+                baseHeight = (viewportAspect / imageAspect) * 100;
+            const scaledWidth = baseWidth * scale;
+            const scaledHeight = baseHeight * scale;
+            const xTravel = Math.max(0, (scaledWidth - 100) / 2);
+            const yTravel = Math.max(0, (scaledHeight - 100) / 2);
+            const left = 50 + ((panX - 50) / 50) * xTravel;
+            const top = 50 + ((panY - 50) / 50) * yTravel;
+            img.style.width = `${baseWidth}%`;
+            img.style.height = `${baseHeight}%`;
+            img.style.left = `${left}%`;
+            img.style.top = `${top}%`;
+            img.style.setProperty("--lc-backdrop-scale", String(scale));
+            if (!img.classList.contains("launch-curtain-instant__backdrop--zoom")) {
+                img.style.transform = `translate(-50%, -50%) scale(${scale})`;
+            }
+        }
+    }
     applyInstantBackdrop(appId) {
         const gs = this.gameSettingsForApp(appId);
         const cache = this.settingsCache || {};
+        this.applyInstantBackdropPlacement(appId);
         const path = String(gs.fullscreen_image_path || cache.fullscreen_image_path || "").trim();
         let opacity = gs.background_opacity;
         if (typeof opacity !== "number") opacity = typeof cache.background_opacity === "number" ? cache.background_opacity : 100;
@@ -1620,16 +1908,21 @@ class PlayButtonLaunchHook {
         }
     }
     applyInstantBgZoom(appId, restart = false) {
-        const on = this.gameSettingsForApp(appId).bg_zoom_enabled === true;
+        const settings = this.gameSettingsForApp(appId);
+        const on = settings.bg_zoom_enabled === true;
+        const baseScale = Math.max(100, Math.min(200, Number(settings.background_scale ?? 100))) / 100;
+        this.applyInstantBackdropPlacement(appId);
         for (const curtain of this.instantCurtains()) {
             const img = curtain.querySelector(".launch-curtain-instant__backdrop");
             if (!img) continue;
             if (!on) {
                 img.classList.remove("launch-curtain-instant__backdrop--zoom");
                 img.style.animationDelay = "";
+                img.style.transform = `translate(-50%, -50%) scale(${baseScale})`;
                 delete img.dataset.lcAnimationEpoch;
                 continue;
             }
+            img.style.transform = "";
             const epoch = String(this.instantAnimationEpoch);
             if (!restart && img.dataset.lcAnimationEpoch === epoch) {
                 continue;
@@ -1652,6 +1945,20 @@ class PlayButtonLaunchHook {
         this.applyInstantBgZoom(this.currentBackdropAppId);
         this.setInstantStatus(this.currentInstantStatusText);
     }
+    beginModernFadeToBlack() {
+        if (!this.instantCurtainVisible || !this.isModernMode() || this.modernFadeToBlackActive) return;
+        this.modernFadeToBlackActive = true;
+        this.dbg("handoff: starting 0.5s fade-to-black before game focus");
+        for (const curtain of this.instantCurtains()) {
+            try {
+                curtain.style.transition = "none";
+                curtain.style.opacity = "1";
+                curtain.classList.remove("launch-curtain-instant--art-visible");
+                curtain.classList.add("launch-curtain-instant--closing");
+            }
+            catch (_error) {}
+        }
+    }
     startModernHandoffPoll() {
         this.stopModernHandoffPoll();
         this.modernHandoffArmed = false;
@@ -1660,8 +1967,11 @@ class PlayButtonLaunchHook {
                 if (!this.instantCurtainVisible) { this.modernHandoffTimer = undefined; return; }
                 this.syncModernCurtainSurfaces();
                 if (st && st.modern_curtain_show === true) this.modernHandoffArmed = true;
+                if (this.modernHandoffArmed && st && st.modern_curtain_fade_to_black === true) {
+                    this.beginModernFadeToBlack();
+                }
                 if (this.modernHandoffArmed && st && st.modern_curtain_show === false) {
-                    this.dbg("handoff: hiding cover (game settled)");
+                    this.dbg("handoff: hiding black cover after game focus");
                     this.hideInstantCurtain();
                     return;
                 }
@@ -1705,6 +2015,7 @@ class PlayButtonLaunchHook {
         }
         const wasVisible = this.instantCurtainVisible;
         this.instantCurtainVisible = true;
+        this.modernFadeToBlackActive = false;
         if (!wasVisible) {
             this.instantAnimationEpoch += 1;
             this.instantAnimationStartedAt = Date.now();
@@ -1713,7 +2024,7 @@ class PlayButtonLaunchHook {
         this.dbg("modern surfaces=" + curtains.length);
         for (const curtain of curtains) {
             curtain.ownerDocument?.documentElement?.classList?.add("launch-curtain-cursor-hidden");
-            curtain.classList.remove("launch-curtain-instant--art-visible");
+            curtain.classList.remove("launch-curtain-instant--art-visible", "launch-curtain-instant--closing");
             curtain.style.transition = "none";
             curtain.style.display = "flex";
             curtain.style.visibility = "visible";
@@ -1774,7 +2085,7 @@ class PlayButtonLaunchHook {
                 curtain.style.visibility = "hidden";
                 curtain.style.opacity = "0";
                 curtain.ownerDocument?.documentElement?.classList?.remove("launch-curtain-cursor-hidden");
-                curtain.classList.remove("launch-curtain-instant--art-visible");
+                curtain.classList.remove("launch-curtain-instant--art-visible", "launch-curtain-instant--closing");
                 const backdrop = curtain.querySelector(".launch-curtain-instant__backdrop");
                 if (backdrop) {
                     backdrop.style.transition = "none";
@@ -1789,6 +2100,10 @@ class PlayButtonLaunchHook {
         this.setInstantCurtainLogo("", false);
     }
     hideInstantCurtain(clearArtworkImmediately = false) {
+        // In Classic mode this DOM surface is only the short handoff into the WPF
+        // curtain. Do not stop browser audio when that bridge disappears. Modern
+        // uses the DOM curtain itself, so hiding it really ends the curtain.
+        if (this.isModernMode()) this.stopRuntimeSoundbite("modern curtain hidden");
         if (this.instantCurtainSafetyTimer !== undefined) {
             window.clearTimeout(this.instantCurtainSafetyTimer);
             this.instantCurtainSafetyTimer = undefined;
@@ -1818,6 +2133,7 @@ class PlayButtonLaunchHook {
         this.instantCurtainVisible = false;
         this.currentInstantStatusText = "";
         const modernHide = this.isModernMode();
+        const modernFadeAlreadyCompleted = modernHide && this.modernFadeToBlackActive;
         for (const curtain of curtains) {
             try {
                 const statusTextEl = curtain.querySelector(".launch-curtain-instant__status-text");
@@ -1827,18 +2143,21 @@ class PlayButtonLaunchHook {
                 curtain.classList.remove("launch-curtain-instant--art-visible");
             }
             catch (e) {}
-            curtain.style.transition = "";
-            if (!modernHide) curtain.style.opacity = "0";
+            if (modernHide) {
+                curtain.style.transition = "none";
+                curtain.style.opacity = "1";
+                curtain.classList.add("launch-curtain-instant--closing");
+            }
+            else {
+                curtain.style.transition = "";
+                curtain.style.opacity = "0";
+            }
         }
-        if (clearArtworkImmediately) {
+        // Classic keeps the previous immediate-clear behavior. Modern deliberately
+        // keeps its artwork alive for the 500 ms fade-to-black, even on a manual
+        // close, so the transition cannot collapse into an abrupt cut.
+        if (clearArtworkImmediately && !modernHide) {
             this.clearInstantArtwork();
-        }
-        if (modernHide) {
-            // Transizione morbida curtain->gioco: i contenuti sfumano verso il NERO, breve
-            // tenuta sul nero, poi il nero sfuma (a quel punto il gioco e' gia' in primo piano).
-            window.setTimeout(() => {
-                this.instantCurtains().forEach((c) => { c.style.transition = ""; c.style.opacity = "0"; });
-            }, 480);
         }
         this.instantCurtainHideTimer = window.setTimeout(() => {
             this.instantCurtainHideTimer = undefined;
@@ -1848,10 +2167,12 @@ class PlayButtonLaunchHook {
             curtains.forEach((curtain) => {
                 curtain.style.visibility = "hidden";
                 curtain.style.display = "none";
+                curtain.classList.remove("launch-curtain-instant--closing");
                 curtain.ownerDocument?.documentElement?.classList?.remove("launch-curtain-cursor-hidden");
             });
+            this.modernFadeToBlackActive = false;
             this.clearInstantArtwork();
-        }, modernHide ? 1320 : 760);
+        }, modernFadeAlreadyCompleted ? 40 : (modernHide ? 520 : 760));
     }
     destroyInstantCurtain() {
         if (this.instantCurtainSafetyTimer !== undefined) {
@@ -1889,6 +2210,7 @@ class PlayButtonLaunchHook {
         this.instantCurtainElementsByDocument.clear();
         this.instantCurtainElement = undefined;
         this.instantCurtainVisible = false;
+        this.modernFadeToBlackActive = false;
         this.promptSuspended = false;
         this.activeInstantAppId = undefined;
         this.prearmedInstantAppId = undefined;
@@ -2271,6 +2593,7 @@ class PlayButtonLaunchHook {
         this.gamepadClosePending = false;
     }
     requestCloseAllCurtains() {
+        this.stopRuntimeSoundbite("curtain manually closed");
         this.dismissInputSuppressionUntil = Math.max(this.dismissInputSuppressionUntil, Date.now() + 900);
         this.postPlayCoverUntil = 0;
         this.postPlayCoverReadyAt = 0;

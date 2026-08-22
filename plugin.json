@@ -10,7 +10,7 @@
       "launcher",
       "console"
     ],
-    "description": "A Windows launch curtain for Steam Big Picture with Modern in-Steam and Classic overlay modes.",
+    "description": "A Windows launch curtain for Steam Big Picture with per-game artwork, iiDB Soundbites, and Modern or Classic launch modes.",
     "image": "assets/launch-curtain.svg"
   }
 }

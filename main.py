@@ -4,6 +4,7 @@ import asyncio
 import base64
 import ctypes
 import html as html_lib
+import hashlib
 import json
 import mimetypes
 import os
@@ -16,7 +17,7 @@ import unicodedata
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from ctypes import wintypes
-from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -25,9 +26,10 @@ import decky
 
 PLAYHUB_YELLOW = "#FCCC01"
 MODERN_FAIL_OPEN_SECONDS = 75.0
+MODERN_FADE_TO_BLACK_SECONDS = 0.62
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
-    "settings_version": 14,
+    "settings_version": 15,
     "auto_mode": True,
     "timeout_enabled": False,
     "curtain_timeout": 50,
@@ -42,7 +44,13 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "logo_position_y": 50,
     "logo_scale": 100,
     "fullscreen_image_path": "",
+    "soundbite_master_volume": 100,
+    "steamgriddb_api_key": "",
+    "soundbite_auto_assign_excluded_app_ids": [],
     "background_opacity": 100,
+    "background_position_x": 50,
+    "background_position_y": 50,
+    "background_scale": 100,
     "logo_shadow_opacity": 0,
     "logo_shadow_blur": 40,
     "bg_zoom_enabled": True,
@@ -81,6 +89,30 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "GamingServicesUI.exe"
     ]
 }
+
+
+def _bounded_background_transform(position_x: Any, position_y: Any, scale_value: Any) -> Tuple[int, int, int]:
+    """Clamp background pan/zoom settings without assuming a 16:9 source image.
+
+    X/Y are normalized pan coordinates (0..100). Runtime/editor code maps them
+    to the actual travel available after fitting the source image to the target
+    viewport. A panoramic source can therefore pan horizontally even at 100%
+    scale, while a tall source can pan vertically, without ever exposing gaps.
+    """
+    try:
+        scale = int(round(float(scale_value)))
+    except (TypeError, ValueError):
+        scale = 100
+    scale = max(100, min(200, scale))
+
+    def _position(value: Any) -> int:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            number = 50.0
+        return int(round(max(0.0, min(100.0, number))))
+
+    return _position(position_x), _position(position_y), scale
 
 
 SW_HIDE = 0
@@ -281,6 +313,243 @@ class GUITHREADINFO(ctypes.Structure):
 
 
 SETTINGS_FILENAME = "launch-curtain.json"
+BACKUP_MANIFEST_FILENAME = "launch-curtain-backup.json"
+BACKUP_FORMAT_VERSION = 1
+
+
+def _backup_version() -> str:
+    try:
+        version_path = os.path.join(os.path.dirname(__file__), "VERSION.txt")
+        with open(version_path, "r", encoding="utf-8") as file:
+            return str(file.read() or "").strip() or "2.5.0"
+    except Exception:
+        return "2.5.0"
+
+
+def _unique_backup_dir(parent: str) -> str:
+    stamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+    base = os.path.join(parent, f"Launch-Curtain-Backup-{stamp}")
+    candidate = base
+    suffix = 2
+    while os.path.exists(candidate):
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+    return candidate
+
+
+def _settings_file_references(settings: Dict[str, Any]) -> List[Tuple[str, str]]:
+    references: List[Tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def add(kind: str, value: Any) -> None:
+        path = os.path.normpath(str(value or "").strip())
+        if not path or not os.path.isfile(path):
+            return
+        key = os.path.normcase(os.path.abspath(path))
+        if key in seen:
+            return
+        seen.add(key)
+        references.append((kind, path))
+
+    add("logo", settings.get("custom_logo_path"))
+    add("launch-image", settings.get("fullscreen_image_path"))
+    per_game = settings.get("per_game", {})
+    if isinstance(per_game, dict):
+        for entry in per_game.values():
+            if not isinstance(entry, dict):
+                continue
+            add("launch-image", entry.get("fullscreen_image_path"))
+            add("soundbite", entry.get("soundbite_path"))
+    return references
+
+
+def _create_backup_sync(settings: Dict[str, Any], destination_parent: str) -> Dict[str, Any]:
+    destination_parent = os.path.abspath(os.path.normpath(str(destination_parent or "").strip()))
+    if not destination_parent or not os.path.isdir(destination_parent):
+        return {"ok": False, "message": "Choose a valid backup destination folder."}
+
+    data_dir = os.path.abspath(_data_dir())
+    if _path_is_inside(destination_parent, data_dir):
+        return {"ok": False, "message": "Choose a backup folder outside Launch Curtain's data folder."}
+
+    backup_root = _unique_backup_dir(destination_parent)
+    backup_data = os.path.join(backup_root, "data")
+    external_root = os.path.join(backup_root, "external")
+    os.makedirs(backup_root, exist_ok=False)
+
+    copied_external: List[Dict[str, str]] = []
+    missing_external: List[str] = []
+    try:
+        if os.path.isdir(data_dir):
+            shutil.copytree(data_dir, backup_data)
+        else:
+            os.makedirs(backup_data, exist_ok=True)
+
+        data_abs = os.path.normcase(os.path.abspath(data_dir))
+        for kind, source in _settings_file_references(settings):
+            source_abs = os.path.normcase(os.path.abspath(source))
+            if _path_is_inside(source, data_dir):
+                continue
+            if not os.path.isfile(source):
+                missing_external.append(source)
+                continue
+            digest = hashlib.sha1(source_abs.encode("utf-8", errors="ignore")).hexdigest()[:12]
+            safe_kind = re.sub(r"[^a-z0-9_-]+", "-", kind.lower()).strip("-") or "file"
+            kind_dir = os.path.join(external_root, safe_kind)
+            os.makedirs(kind_dir, exist_ok=True)
+            filename = f"{digest}-{os.path.basename(source)}"
+            destination = os.path.join(kind_dir, filename)
+            shutil.copy2(source, destination)
+            copied_external.append({
+                "kind": kind,
+                "original_path": os.path.abspath(source),
+                "backup_path": os.path.relpath(destination, backup_root).replace("\\", "/"),
+            })
+
+        manifest = {
+            "format": "launch-curtain-backup",
+            "format_version": BACKUP_FORMAT_VERSION,
+            "plugin_version": _backup_version(),
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "source_data_dir": data_dir,
+            "external_files": copied_external,
+            "missing_external_files": missing_external,
+        }
+        with open(os.path.join(backup_root, BACKUP_MANIFEST_FILENAME), "w", encoding="utf-8") as file:
+            json.dump(manifest, file, indent=2)
+        return {
+            "ok": True,
+            "path": backup_root,
+            "external_files": len(copied_external),
+            "missing_external_files": len(missing_external),
+            "message": f"Backup created: {backup_root}",
+        }
+    except Exception:
+        shutil.rmtree(backup_root, ignore_errors=True)
+        raise
+
+
+def _remap_restored_settings_paths(settings: Dict[str, Any], manifest: Dict[str, Any], backup_root: str, staging_data_dir: str, final_data_dir: str) -> None:
+    source_data_dir = os.path.abspath(os.path.normpath(str(manifest.get("source_data_dir", "") or ""))) if manifest.get("source_data_dir") else ""
+    external_map: Dict[str, Tuple[str, str]] = {}
+    for item in manifest.get("external_files", []) if isinstance(manifest.get("external_files"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        original = os.path.normpath(str(item.get("original_path", "") or "").strip())
+        rel = str(item.get("backup_path", "") or "").replace("/", os.sep).strip()
+        kind = str(item.get("kind", "file") or "file")
+        if original and rel:
+            external_map[os.path.normcase(os.path.abspath(original))] = (rel, kind)
+
+    restored_external_root = os.path.join(staging_data_dir, "restored-local")
+    copied_targets: Dict[str, str] = {}
+
+    def remap(value: Any) -> str:
+        raw = os.path.normpath(str(value or "").strip())
+        if not raw:
+            return ""
+        raw_abs = os.path.abspath(raw)
+        if source_data_dir and _path_is_inside(raw_abs, source_data_dir):
+            try:
+                rel = os.path.relpath(raw_abs, source_data_dir)
+                staged_target = os.path.normpath(os.path.join(staging_data_dir, rel))
+                final_target = os.path.normpath(os.path.join(final_data_dir, rel))
+                return final_target if os.path.exists(staged_target) else raw
+            except Exception:
+                return raw
+
+        key = os.path.normcase(raw_abs)
+        if key not in external_map:
+            return raw
+        if key in copied_targets:
+            return copied_targets[key]
+        rel, kind = external_map[key]
+        source = os.path.abspath(os.path.join(backup_root, rel))
+        if not _path_is_inside(source, backup_root) or not os.path.isfile(source):
+            return raw
+        safe_kind = re.sub(r"[^a-z0-9_-]+", "-", kind.lower()).strip("-") or "file"
+        target_dir = os.path.join(restored_external_root, safe_kind)
+        os.makedirs(target_dir, exist_ok=True)
+        staged_target = os.path.join(target_dir, os.path.basename(source))
+        if os.path.exists(staged_target):
+            stem, ext = os.path.splitext(os.path.basename(source))
+            staged_target = os.path.join(target_dir, f"{stem}-{uuid.uuid4().hex[:6]}{ext}")
+        shutil.copy2(source, staged_target)
+        rel_target = os.path.relpath(staged_target, staging_data_dir)
+        final_target = os.path.normpath(os.path.join(final_data_dir, rel_target))
+        copied_targets[key] = final_target
+        return final_target
+
+    if "custom_logo_path" in settings:
+        settings["custom_logo_path"] = remap(settings.get("custom_logo_path"))
+    if "fullscreen_image_path" in settings:
+        settings["fullscreen_image_path"] = remap(settings.get("fullscreen_image_path"))
+    per_game = settings.get("per_game", {})
+    if isinstance(per_game, dict):
+        for entry in per_game.values():
+            if not isinstance(entry, dict):
+                continue
+            if "fullscreen_image_path" in entry:
+                entry["fullscreen_image_path"] = remap(entry.get("fullscreen_image_path"))
+            if "soundbite_path" in entry:
+                entry["soundbite_path"] = remap(entry.get("soundbite_path"))
+
+
+def _restore_backup_sync(backup_root: str) -> Dict[str, Any]:
+    backup_root = os.path.abspath(os.path.normpath(str(backup_root or "").strip()))
+    manifest_path = os.path.join(backup_root, BACKUP_MANIFEST_FILENAME)
+    backup_data = os.path.join(backup_root, "data")
+    backup_settings_path = os.path.join(backup_data, SETTINGS_FILENAME)
+    if not os.path.isdir(backup_root) or not os.path.isfile(manifest_path) or not os.path.isdir(backup_data):
+        return {"ok": False, "message": "The selected folder is not a Launch Curtain backup."}
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as file:
+            manifest = json.load(file)
+        if manifest.get("format") != "launch-curtain-backup" or int(manifest.get("format_version", 0) or 0) != BACKUP_FORMAT_VERSION:
+            return {"ok": False, "message": "Unsupported Launch Curtain backup format."}
+        with open(backup_settings_path, "r", encoding="utf-8") as file:
+            restored_settings = json.load(file)
+        if not isinstance(restored_settings, dict):
+            return {"ok": False, "message": "The backup settings are invalid."}
+    except Exception as error:
+        return {"ok": False, "message": f"Could not read backup: {error}"}
+
+    current_data_dir = os.path.abspath(_data_dir())
+    temp_root = os.path.join(os.environ.get("TEMP", os.path.dirname(current_data_dir)), f"launch-curtain-restore-{uuid.uuid4().hex[:10]}")
+    rollback_dir = os.path.join(temp_root, "rollback")
+    staged_dir = os.path.join(temp_root, "staged")
+    os.makedirs(temp_root, exist_ok=False)
+    try:
+        if os.path.isdir(current_data_dir):
+            shutil.copytree(current_data_dir, rollback_dir)
+        shutil.copytree(backup_data, staged_dir)
+        staged_settings_path = os.path.join(staged_dir, SETTINGS_FILENAME)
+        with open(staged_settings_path, "r", encoding="utf-8") as file:
+            staged_settings = json.load(file)
+        _remap_restored_settings_paths(staged_settings, manifest, backup_root, staged_dir, current_data_dir)
+        with open(staged_settings_path, "w", encoding="utf-8") as file:
+            json.dump(staged_settings, file, indent=2)
+
+        if os.path.isdir(current_data_dir):
+            shutil.rmtree(current_data_dir)
+        shutil.copytree(staged_dir, current_data_dir)
+        return {
+            "ok": True,
+            "path": backup_root,
+            "plugin_version": str(manifest.get("plugin_version", "") or ""),
+            "message": "Backup restored successfully.",
+        }
+    except Exception:
+        try:
+            if os.path.isdir(current_data_dir):
+                shutil.rmtree(current_data_dir)
+            if os.path.isdir(rollback_dir):
+                shutil.copytree(rollback_dir, current_data_dir)
+        except Exception as rollback_error:
+            _log_warning(f"Backup restore rollback failed: {rollback_error}")
+        raise
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
 
 
 def _settings_path() -> str:
@@ -327,6 +596,12 @@ def _launch_images_dir() -> str:
     images_dir = os.path.join(_data_dir(), "launch-images")
     os.makedirs(images_dir, exist_ok=True)
     return images_dir
+
+
+def _soundbites_dir() -> str:
+    audio_dir = os.path.join(_data_dir(), "soundbites")
+    os.makedirs(audio_dir, exist_ok=True)
+    return audio_dir
 
 
 def _homebrew_root_from_plugin_path() -> str:
@@ -689,7 +964,13 @@ def _fetch_remote_image_dimensions(image_url: str, max_bytes: int = 14 * 1024 * 
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         REMOTE_IMAGE_DIMENSION_CACHE[cache_key] = None
         return None
-    referer = "https://wall.alphacoders.com/" if "alphacoders.com" in parsed.netloc.lower() else "https://store.playstation.com/"
+    host = parsed.netloc.lower()
+    if "alphacoders.com" in host:
+        referer = "https://wall.alphacoders.com/"
+    elif host == "assets.iisu.network":
+        referer = IIDB_BASE_URL + "/"
+    else:
+        referer = "https://store.playstation.com/"
     request = Request(
         cache_key,
         headers={
@@ -904,6 +1185,44 @@ _PS_PLATFORM_SUFFIX = re.compile(
 )
 
 
+# Keep edition qualifiers separate from _ps_normalize_title so automatic PlayStation
+# bulk matching can mirror UniversalPSNMetadata's safer product selection instead
+# of simply accepting the first normalized-title match from Store search order.
+_PS_EDITION_QUALIFIER_ALIASES = {
+    "directors cut": "directors cut",
+    "director s cut": "directors cut",
+    "game of the year": "game of the year",
+    "goty": "game of the year",
+    "digital deluxe": "deluxe",
+    "deluxe edition": "deluxe",
+    "deluxe": "deluxe",
+    "complete edition": "complete",
+    "complete": "complete",
+    "definitive edition": "definitive",
+    "definitive": "definitive",
+    "ultimate edition": "ultimate",
+    "ultimate": "ultimate",
+    "special edition": "special edition",
+    "anniversary edition": "anniversary edition",
+    "premium edition": "premium",
+    "premium": "premium",
+    "enhanced edition": "enhanced",
+    "enhanced": "enhanced",
+    "gold edition": "gold edition",
+    "legendary edition": "legendary edition",
+    "collectors edition": "collectors edition",
+    "collector s edition": "collectors edition",
+    "standard edition": "standard",
+    "standard": "standard",
+    "remastered": "remaster",
+    "remaster": "remaster",
+    "remake": "remake",
+}
+
+_PS_BULK_WEAK_MATCH_SCORE = 600
+_PS_BULK_AMBIGUOUS_SCORE_DIFFERENCE = 25
+
+
 def _ps_strip_search_noise(value: str) -> str:
     text = html_lib.unescape(str(value or ""))
     for mark in _PS_IGNORED_MARKS:
@@ -961,6 +1280,97 @@ def _ps_title_safe_match(query: str, title: str) -> bool:
     compact_query = nq.replace(" ", "")
     compact_title = nt.replace(" ", "")
     return len(compact_query) >= 4 and compact_query == compact_title
+
+
+def _ps_comparison_title(value: str) -> str:
+    text = _ps_strip_search_noise(value).lower().replace("&", " and ").replace("'", " ").replace("’", " ")
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip().removeprefix("the ")
+
+
+def _ps_edition_qualifiers(comparison_title: str) -> set[str]:
+    title = f" {str(comparison_title or '').strip()} "
+    found: set[str] = set()
+    # Longest phrases first so "digital deluxe" is not reduced to just "deluxe".
+    for phrase, canonical in sorted(_PS_EDITION_QUALIFIER_ALIASES.items(), key=lambda pair: len(pair[0]), reverse=True):
+        if re.search(rf"\b{re.escape(phrase)}\b", title, re.IGNORECASE):
+            found.add(canonical)
+    return found
+
+
+def _ps_remove_edition_qualifiers(comparison_title: str) -> str:
+    text = str(comparison_title or "")
+    for phrase in sorted(_PS_EDITION_QUALIFIER_ALIASES.keys(), key=len, reverse=True):
+        text = re.sub(rf"\b{re.escape(phrase)}\b", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bedition\b", " ", text, flags=re.IGNORECASE)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _ps_bulk_classification_score(classification: str, requested_edition: bool) -> int:
+    value = str(classification or "").strip().upper().replace("-", "_").replace(" ", "_")
+    if value == "FULL_GAME":
+        return 120
+    if value == "GAME_BUNDLE":
+        return -120
+    if value == "PREMIUM_EDITION":
+        return 40 if requested_edition else -160
+    if value in {"ADD_ON", "ADD_ON_PACK", "CHARACTER", "COSTUME", "GAME_LEVEL", "ITEM", "VIRTUAL_CURRENCY", "DEMO"}:
+        return -500
+    return 0
+
+
+def _ps_bulk_match_score(game_name: str, result: Dict[str, Any]) -> int:
+    candidate_name = str(result.get("title") or "").strip()
+    if not candidate_name:
+        return 0
+    requested = _ps_comparison_title(game_name)
+    candidate = _ps_comparison_title(candidate_name)
+    if not requested or not candidate:
+        return 0
+
+    requested_qualifiers = _ps_edition_qualifiers(requested)
+    candidate_qualifiers = _ps_edition_qualifiers(candidate)
+    exact = requested == candidate
+    base_exact = _ps_remove_edition_qualifiers(requested) == _ps_remove_edition_qualifiers(candidate)
+    if not exact and not base_exact:
+        return 0
+
+    score = 1000 if exact else 700
+    missing = requested_qualifiers - candidate_qualifiers
+    extra = candidate_qualifiers - requested_qualifiers
+    if requested_qualifiers and not missing:
+        score += 200
+    score -= 130 * len(missing)
+    score -= 200 * len(extra)
+    score += _ps_bulk_classification_score(str(result.get("product_type") or ""), bool(requested_qualifiers))
+    return score
+
+
+def _select_playstation_bulk_match(game_name: str, results: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    scored: List[Tuple[int, str, Dict[str, Any]]] = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        score = _ps_bulk_match_score(game_name, item)
+        if score > 0:
+            scored.append((score, str(item.get("title") or "").lower(), item))
+    scored.sort(key=lambda row: (-row[0], row[1]))
+    if not scored:
+        return None
+    best_score, _best_title_sort, best = scored[0]
+    if len(scored) > 1:
+        runner_score = scored[1][0]
+        if best_score < _PS_BULK_WEAK_MATCH_SCORE and best_score - runner_score < _PS_BULK_AMBIGUOUS_SCORE_DIFFERENCE:
+            _log_info(
+                f"PlayStation bulk skipped ambiguous match title={game_name} "
+                f"best={best.get('title')} score={best_score} runner={scored[1][2].get('title')} score={runner_score}"
+            )
+            return None
+    selected = dict(best)
+    selected["bulk_match_score"] = best_score
+    return selected
 
 
 def _extract_playstation_game_results(
@@ -1529,6 +1939,14 @@ BACKGROUND_SERVICE_CONFIGS: Dict[str, Dict[str, str]] = {
     },
     "xbox": {
         "label": "Xbox",
+        "query_suffix": ""
+    },
+    "iidb": {
+        "label": "iiDB",
+        "query_suffix": ""
+    },
+    "steamgriddb": {
+        "label": "SteamGridDB",
         "query_suffix": ""
     }
 }
@@ -2158,88 +2576,89 @@ def _background_result_from_known_store_asset(
     return result
 
 
-def _search_nintendo_backgrounds_sync(title: str, search_query: str = "") -> List[Dict[str, Any]]:
-    """Search Nintendo's own catalog and return landscape artwork only.
+def _search_nintendo_us_backgrounds_sync(raw_query: str, limit: int = 24) -> List[Dict[str, Any]]:
+    """Return official 1920x1080 North-American Nintendo landscape assets.
 
-    This follows the same fields used by the Nintendo Metadata Playnite extension:
-    Europe uses ``image_url_h2x1_s`` as LandscapeImage, while the US catalog uses
-    ``productImage`` and renders it through Nintendo's 16:9 Cloudinary endpoint.
-    Covers/square images are intentionally ignored.
+    NintendoMetadata itself builds LandscapeImage from ``productImage`` through
+    assets.nintendo.com at 1920px wide.  We keep that exact quality target rather
+    than asking Cloudinary for an artificial 4K upscale.
     """
-    raw_query = str(search_query or "").strip() or str(title or "").strip()
-    if not raw_query:
-        return []
-    market = _store_market_locale()
-    country = market.split("-", 1)[-1].upper() if "-" in market else "US"
+    app_id = "U3B6GR4UA3"
+    api_key = "a29c6927638bfd8cee23993e51e721c9"
+    request_body = {
+        "requests": [{
+            "indexName": "store_game_en_us",
+            "query": raw_query,
+            "facetFilters": ["corePlatforms:Nintendo Switch", "hasDlc:false"],
+            "hitsPerPage": max(12, min(30, int(limit or 24))),
+        }]
+    }
+    request = Request(
+        f"https://{app_id}-2.algolia.net/1/indexes/*/queries",
+        data=json.dumps(request_body).encode("utf-8"),
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "X-Algolia-API-Key": api_key,
+            "X-Algolia-Application-Id": app_id,
+        },
+        method="POST",
+    )
+    with urlopen(request, timeout=18) as response:
+        payload = json.loads(response.read(2_000_000).decode("utf-8", "ignore"))
+
+    hits = ((payload.get("results") or [{}])[0].get("hits") or []) if isinstance(payload, dict) else []
+    ranked: List[Tuple[int, str, Dict[str, Any]]] = []
+    for hit in hits:
+        if not isinstance(hit, dict):
+            continue
+        candidate_title = str(hit.get("title") or hit.get("name") or "").strip()
+        product_image = str(hit.get("productImage") or "").strip()
+        if not candidate_title or not product_image:
+            continue
+        score = _iidb_title_score(raw_query, candidate_title)
+        # Cross-region enrichment must be conservative: only exact/base-equivalent
+        # names should be allowed to replace the regional 1600x800 asset.
+        if score < 900:
+            continue
+        landscape = (
+            "https://assets.nintendo.com/image/upload/"
+            "ar_16:9,b_auto:border,c_lpad/b_white/f_auto/q_auto/dpr_1/"
+            f"c_scale,w_1920/{product_image.lstrip('/')}"
+        )
+        page_url = _absolute_url(str(hit.get("url") or ""), "https://www.nintendo.com/")
+        result = _background_result_from_known_store_asset(
+            "nintendo", landscape, "Nintendo background", (1920, 1080), page_url=page_url
+        )
+        if result:
+            result["nintendo_title"] = candidate_title
+            result["nintendo_match_score"] = score
+            result["nintendo_region"] = "NA"
+            ranked.append((score, candidate_title.lower(), result))
+
+    ranked.sort(key=lambda row: (-row[0], row[1]))
     results: List[Dict[str, Any]] = []
     seen = set()
-
-    def add(url: str, dimensions: Optional[Tuple[int, int]], page_url: str = "") -> None:
-        result = _background_result_from_known_store_asset(
-            "nintendo", url, "Nintendo background", dimensions, page_url=page_url
-        )
-        if not result:
-            return
-        key = result["image_url"].split("?", 1)[0].lower()
-        if key in seen:
-            return
+    for _score, _title_sort, result in ranked:
+        key = str(result.get("image_url") or "").split("?", 1)[0].lower()
+        if not key or key in seen:
+            continue
         seen.add(key)
-        result["id"] = f"nintendo-{len(results) + 1}"
+        result["id"] = f"nintendo-na-{len(results) + 1}"
         results.append(result)
+        if len(results) >= limit:
+            break
+    return results
 
-    # The current Playnite extension uses Algolia for the North-American store.
-    if country in {"US", "CA", "MX"}:
-        app_id = "U3B6GR4UA3"
-        api_key = "a29c6927638bfd8cee23993e51e721c9"
-        request_body = {
-            "requests": [{
-                "indexName": "store_game_en_us",
-                "query": raw_query,
-                "facetFilters": ["corePlatforms:Nintendo Switch", "hasDlc:false"],
-                "hitsPerPage": 12,
-            }]
-        }
-        request = Request(
-            f"https://{app_id}-2.algolia.net/1/indexes/*/queries",
-            data=json.dumps(request_body).encode("utf-8"),
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-                "X-Algolia-API-Key": api_key,
-                "X-Algolia-Application-Id": app_id,
-            },
-            method="POST",
-        )
-        with urlopen(request, timeout=18) as response:
-            payload = json.loads(response.read(2_000_000).decode("utf-8", "ignore"))
-        for hit in ((payload.get("results") or [{}])[0].get("hits") or []):
-            if not isinstance(hit, dict):
-                continue
-            product_image = str(hit.get("productImage") or "").strip()
-            if not product_image:
-                continue
-            # Same landscape transformation used by NintendoMetadata.ParseUsGame.
-            landscape = (
-                "https://assets.nintendo.com/image/upload/"
-                "ar_16:9,b_auto:border,c_lpad/b_white/f_auto/q_auto/dpr_1/"
-                f"c_scale,w_1920/{product_image.lstrip('/')}"
-            )
-            page_url = _absolute_url(str(hit.get("url") or ""), "https://www.nintendo.com/")
-            add(landscape, (1920, 1080), page_url)
-            if len(results) >= 24:
-                break
-        return results
 
-    # Europe is the best default for Italy and most non-NA installations. The
-    # Playnite extension queries this Solr endpoint and maps image_url_h2x1_s to
-    # LandscapeImage. Only that wide field is imported here.
+def _search_nintendo_eu_backgrounds_sync(raw_query: str, limit: int = 24) -> List[Dict[str, Any]]:
     params = {
         "q": raw_query,
         "fq": 'type:GAME AND playable_on_txt:"HAC"',
         "sort": "score desc, date_from desc",
         "start": 0,
-        "rows": 24,
+        "rows": max(12, min(30, int(limit or 24))),
         "wt": "json",
     }
     url = f"https://search.nintendo-europe.com/en/select?{urlencode(params)}"
@@ -2247,16 +2666,80 @@ def _search_nintendo_backgrounds_sync(title: str, search_query: str = "") -> Lis
     with urlopen(request, timeout=18) as response:
         payload = json.loads(response.read(2_000_000).decode("utf-8", "ignore"))
     docs = ((payload.get("response") or {}).get("docs") or []) if isinstance(payload, dict) else []
+    results: List[Dict[str, Any]] = []
+    seen = set()
     for game in docs:
         if not isinstance(game, dict):
             continue
         image_url = str(game.get("image_url_h2x1_s") or "").strip()
         if not image_url:
             continue
-        # The extension requests the larger landscape variant by replacing 500w.
+        # NintendoMetadata's European provider explicitly promotes 500w to 1600w.
+        # This source is a 2:1 banner, so 1600x800 is the native high-quality target
+        # exposed by that path; do not lie to the UI by labelling it 16:9/1080p.
         large_url = image_url.replace("500w", "1600w")
         page_url = _absolute_url(str(game.get("url") or ""), "https://www.nintendo.com/")
-        add(large_url, (1600, 800), page_url)
+        result = _background_result_from_known_store_asset(
+            "nintendo", large_url, "Nintendo background", (1600, 800), page_url=page_url
+        )
+        if not result:
+            continue
+        key = str(result.get("image_url") or "").split("?", 1)[0].lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result["id"] = f"nintendo-eu-{len(results) + 1}"
+        result["nintendo_title"] = str(game.get("title") or "").strip()
+        result["nintendo_region"] = "EU"
+        results.append(result)
+        if len(results) >= limit:
+            break
+    return results
+
+
+def _search_nintendo_backgrounds_sync(title: str, search_query: str = "") -> List[Dict[str, Any]]:
+    """Search official Nintendo catalogues and prefer true 1920x1080 artwork.
+
+    Previously non-North-American installations only queried Nintendo Europe,
+    whose Playnite-derived landscape path tops out at the 1600x800 H2x1 banner.
+    We now query the regional catalogue and Nintendo's NA catalogue together.
+    A safely title-matched NA ``productImage`` supplies the official 1920x1080
+    landscape first; the EU 1600x800 image remains as a fallback/alternative.
+    """
+    raw_query = str(search_query or "").strip() or str(title or "").strip()
+    if not raw_query:
+        return []
+    market = _store_market_locale()
+    country = market.split("-", 1)[-1].upper() if "-" in market else "US"
+
+    jobs: Dict[str, Any] = {}
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        # NA is useful everywhere because it is the official source that exposes
+        # a 1920x1080 LandscapeImage. For NA users it is naturally the primary path.
+        jobs["na"] = executor.submit(_search_nintendo_us_backgrounds_sync, raw_query, 24)
+        if country not in {"US", "CA", "MX"}:
+            jobs["eu"] = executor.submit(_search_nintendo_eu_backgrounds_sync, raw_query, 24)
+
+        gathered: Dict[str, List[Dict[str, Any]]] = {"na": [], "eu": []}
+        for source_name, future in jobs.items():
+            try:
+                gathered[source_name] = list(future.result() or [])
+            except Exception as error:
+                _log_warning(f"Nintendo {source_name.upper()} background lookup failed query={raw_query}: {error}")
+
+    # Quality first: safe NA matches are real 1920x1080 assets. EU H2x1 remains
+    # available afterwards for regional coverage and games absent from NA.
+    ordered = gathered.get("na", []) + gathered.get("eu", [])
+    results: List[Dict[str, Any]] = []
+    seen = set()
+    for item in ordered:
+        url = str(item.get("image_url") or "")
+        key = url.split("?", 1)[0].lower()
+        if not url or key in seen:
+            continue
+        seen.add(key)
+        item["id"] = f"nintendo-{len(results) + 1}"
+        results.append(item)
         if len(results) >= 24:
             break
     return results
@@ -2858,7 +3341,155 @@ def _search_xbox_backgrounds_sync(title: str, search_query: str = "") -> List[Di
         return []
 
 
-def _search_background_service_images_sync(title: str, service: str, search_query: str = "") -> Dict[str, Any]:
+STEAMGRIDDB_API_BASE = "https://www.steamgriddb.com/api/v2"
+
+
+def _steamgriddb_api_json(path: str, api_key: str, timeout: int = 12) -> Any:
+    key = str(api_key or "").strip()
+    if not key:
+        raise ValueError("SteamGridDB API key is not configured. Add your personal API key in the Launch Curtain QAM.")
+    url = STEAMGRIDDB_API_BASE + (path if path.startswith("/") else "/" + path)
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "Launch-Curtain/2.5.0 SteamGridDB-Hero integration",
+            "Accept": "application/json",
+            "Authorization": f"Bearer {key}",
+        },
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            raw = response.read(4_000_000).decode("utf-8", "ignore")
+    except Exception as error:
+        raise RuntimeError(f"SteamGridDB API request failed: {error}") from error
+    try:
+        payload = json.loads(raw)
+    except Exception as error:
+        raise RuntimeError("SteamGridDB returned an invalid JSON response.") from error
+    if isinstance(payload, dict) and payload.get("success") is False:
+        errors = payload.get("errors")
+        if isinstance(errors, list):
+            message = "; ".join(str(item) for item in errors if item)
+        else:
+            message = str(errors or "SteamGridDB API error")
+        raise RuntimeError(message or "SteamGridDB API error")
+    if isinstance(payload, dict) and "data" in payload:
+        return payload.get("data")
+    return payload
+
+
+def _steamgriddb_best_game(query: str, games: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(games, list) or not games:
+        return None
+    best: Optional[Dict[str, Any]] = None
+    best_score = -1
+    for index, item in enumerate(games):
+        if not isinstance(item, dict):
+            continue
+        game_id = item.get("id")
+        try:
+            game_id = int(game_id)
+        except (TypeError, ValueError):
+            continue
+        title = str(item.get("name") or item.get("title") or "").strip()
+        score = _iidb_title_score(query, title)
+        # SteamGridDB autocomplete is already relevance ordered; keep a small
+        # tie-break bonus for earlier results rather than rejecting fuzzy names.
+        score += max(0, 40 - index)
+        if score > best_score:
+            best_score = score
+            best = {**item, "id": game_id, "name": title}
+    return best
+
+
+def _steamgriddb_hero_results(data: Any, game_title: str = "") -> List[Dict[str, Any]]:
+    if not isinstance(data, list):
+        return []
+    results: List[Dict[str, Any]] = []
+    seen = set()
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        image_url = str(item.get("url") or item.get("image") or item.get("image_url") or "").strip()
+        if not image_url.startswith(("http://", "https://")):
+            continue
+        key = image_url.split("?", 1)[0].lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        thumb = str(item.get("thumb") or item.get("thumbnail") or item.get("thumbnail_url") or image_url).strip()
+        try:
+            width = int(item.get("width") or 0)
+        except (TypeError, ValueError):
+            width = 0
+        try:
+            height = int(item.get("height") or 0)
+        except (TypeError, ValueError):
+            height = 0
+        resolution = f"{width}x{height}" if width > 0 and height > 0 else "SteamGridDB Hero"
+        author = item.get("author")
+        author_name = ""
+        if isinstance(author, dict):
+            author_name = str(author.get("name") or author.get("username") or "").strip()
+        elif author:
+            author_name = str(author).strip()
+        results.append({
+            "id": f"steamgriddb-hero-{item.get('id') or len(results) + 1}",
+            "image_url": image_url,
+            "thumbnail_url": thumb or image_url,
+            "preview_url": thumb or image_url,
+            "width": width or None,
+            "height": height or None,
+            "resolution": resolution,
+            "source": "SteamGridDB Hero",
+            "game_title": game_title,
+            "author": author_name,
+            "asset_type": "hero",
+        })
+    # Preserve SteamGridDB's own API ordering; Launch Curtain only normalizes
+    # Hero records and does not mix in other asset categories.
+    return results[:36]
+
+
+def _search_steamgriddb_heroes_sync(title: str, search_query: str, api_key: str, steam_app_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    query = str(search_query or title or "").strip()
+    if not query:
+        return []
+    # Native Steam games can bypass title ambiguity when the user is searching
+    # the actual game title. If the user manually types another title, honor it
+    # via autocomplete instead of forcing the current Steam AppID.
+    query_matches_title = _ps_normalize_title(query) == _ps_normalize_title(title)
+    if query_matches_title and steam_app_id is not None and 0 < int(steam_app_id) < 0x80000000:
+        try:
+            data = _steamgriddb_api_json(
+                f"/heroes/steam/{int(steam_app_id)}?page=0&types=static&nsfw=false&humor=any&epilepsy=any&mimes=image/png,image/jpeg,image/webp",
+                api_key,
+            )
+            results = _steamgriddb_hero_results(data, title)
+            if results:
+                _log_info(f"SteamGridDB Hero search steam_app_id={steam_app_id} title={title} results={len(results)}")
+                return results
+        except Exception as error:
+            _log_warning(f"SteamGridDB direct Steam Hero lookup failed app_id={steam_app_id}: {error}; falling back to title search")
+
+    encoded = quote(quote(query, safe=""), safe="")
+    games = _steamgriddb_api_json(f"/search/autocomplete/{encoded}", api_key)
+    game = _steamgriddb_best_game(query, games)
+    if not game:
+        _log_info(f"SteamGridDB title search returned no game query={query}")
+        return []
+    game_id = int(game["id"])
+    game_name = str(game.get("name") or query)
+    heroes = _steamgriddb_api_json(
+        f"/heroes/game/{game_id}?page=0&types=static&nsfw=false&humor=any&epilepsy=any&mimes=image/png,image/jpeg,image/webp",
+        api_key,
+    )
+    results = _steamgriddb_hero_results(heroes, game_name)
+    _log_info(f"SteamGridDB Hero search query={query} game_id={game_id} game={game_name} results={len(results)}")
+    return results
+
+
+def _search_background_service_images_sync(title: str, service: str, search_query: str = "", api_key: str = "", steam_app_id: Optional[int] = None) -> Dict[str, Any]:
     config = BACKGROUND_SERVICE_CONFIGS[service]
     raw_query = str(search_query or "").strip() or title.strip()
     direct_results: List[Dict[str, Any]] = []
@@ -2870,11 +3501,16 @@ def _search_background_service_images_sync(title: str, service: str, search_quer
         direct_results = _search_nintendo_backgrounds_sync(title, raw_query)
     elif service == "xbox":
         direct_results = _search_xbox_backgrounds_sync(title, raw_query)
+    elif service == "iidb":
+        iidb_result = _search_iidb_assets_sync(raw_query, "banner")
+        direct_results = iidb_result.get("results", []) if isinstance(iidb_result, dict) else []
+    elif service == "steamgriddb":
+        direct_results = _search_steamgriddb_heroes_sync(title, raw_query, api_key, steam_app_id)
 
     query = f"{raw_query} {config['query_suffix']}".strip()
     google_url = ""
     google_results: List[Dict[str, Any]] = []
-    # Nintendo/Xbox results come from their Store APIs/pages. Do not use a broad
+    # Nintendo/Xbox/iiDB results come from their own catalogues. Do not use a broad
     # image-search fallback there because it can re-introduce covers/posters.
     if service == "igdb":
         google_url = _google_search_url_for_query(query)
@@ -2922,7 +3558,14 @@ def _download_image_sync(image_url: str, app_id: int, title: str, resolution: st
 
     def fetch_image(url: str) -> Tuple[bytes, str]:
         fetch_host = urlparse(url).netloc.lower()
-        fetch_referer = "https://wall.alphacoders.com/" if "alphacoders.com" in fetch_host else "https://www.google.com/"
+        if "alphacoders.com" in fetch_host:
+            fetch_referer = "https://wall.alphacoders.com/"
+        elif fetch_host == "assets.iisu.network":
+            fetch_referer = IIDB_BASE_URL + "/"
+        elif "steamgriddb" in fetch_host:
+            fetch_referer = "https://www.steamgriddb.com/"
+        else:
+            fetch_referer = "https://www.google.com/"
         fetch_request = Request(
             url,
             headers={
@@ -2975,6 +3618,1819 @@ def _download_image_sync(image_url: str, app_id: int, title: str, resolution: st
     with open(destination, "wb") as file:
         file.write(data)
     return destination
+
+
+
+IIDB_BASE_URL = "https://iidb.iisu.network"
+IIDB_AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac", ".webm"}
+IIDB_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".avif"}
+
+
+def _iidb_request_text(url: str, timeout: int = 6, extra_headers: Optional[Dict[str, str]] = None) -> str:
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": IIDB_BASE_URL + "/",
+    }
+    if extra_headers:
+        headers.update({str(key): str(value) for key, value in extra_headers.items() if value is not None})
+    request = Request(url, headers=headers)
+    with urlopen(request, timeout=timeout) as response:
+        return response.read(4_000_000).decode("utf-8", "ignore")
+
+
+def _iidb_request_rsc_text(url: str, timeout: int = 7) -> str:
+    """Ask a Next/App-Router page for the same payload used by client navigation.
+
+    iiDB's visible search is hydrated client-side. A normal document request to
+    ?q=<title> can contain only the small page shell even though the browser shows
+    matching game cards after hydration. Requesting the React Server Component
+    representation gives Launch Curtain a chance to see those cards and, crucially,
+    the numeric /games/<id> values already attached to the search results.
+    """
+    separator = "&" if "?" in url else "?"
+    rsc_url = f"{url}{separator}_rsc=launchcurtain250"
+    return _iidb_request_text(
+        rsc_url,
+        timeout,
+        {
+            "Accept": "text/x-component,*/*;q=0.8",
+            "RSC": "1",
+            "Next-Router-Prefetch": "1",
+            "Next-Url": urlparse(url).path + (f"?{urlparse(url).query}" if urlparse(url).query else ""),
+        },
+    )
+
+
+def _iidb_render_search_with_browser(query: str, kind: str) -> List[Tuple[str, str]]:
+    """Render iiDB's own q= search in a headless installed Chromium browser.
+
+    This is a fallback for the current client-hydrated search: users should never
+    need to look up iiDB ids manually. Windows 11 ships Edge, and many systems
+    also have Chrome. --dump-dom executes the same JavaScript that makes the
+    website search results visible, then the normal title->id parser reads those
+    result cards. No window is shown.
+    """
+    if sys.platform != "win32":
+        return []
+    candidates = [
+        os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "Microsoft", "Edge", "Application", "msedge.exe"),
+        os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Microsoft", "Edge", "Application", "msedge.exe"),
+        os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"), "Google", "Chrome", "Application", "chrome.exe"),
+        os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "Google", "Chrome", "Application", "chrome.exe"),
+    ]
+    browser = next((path for path in candidates if path and os.path.isfile(path)), "")
+    if not browser:
+        _log_info("iiDB rendered search skipped: Edge/Chrome not found")
+        return []
+    urls = _iidb_catalog_request_urls(query, kind)
+    rendered: List[Tuple[str, str]] = []
+    for url in urls:
+        profile_dir = os.path.join(os.environ.get("TEMP", os.getcwd()), f"launch-curtain-iidb-{uuid.uuid4().hex[:8]}")
+        try:
+            os.makedirs(profile_dir, exist_ok=True)
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            proc = subprocess.run(
+                [browser, "--headless=new", "--disable-gpu", "--no-first-run", "--disable-extensions",
+                 "--virtual-time-budget=5000", f"--user-data-dir={profile_dir}", "--dump-dom", url],
+                capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=14,
+                creationflags=flags,
+            )
+            html = str(proc.stdout or "")
+            if html:
+                rendered.append((url, html))
+                _log_info(f"iiDB rendered search response kind={kind} url={url} bytes={len(html)} code={proc.returncode}")
+            else:
+                _log_info(f"iiDB rendered search empty kind={kind} url={url} code={proc.returncode}")
+        except Exception as error:
+            _log_info(f"iiDB rendered search failed kind={kind} url={url}: {error}")
+        finally:
+            try:
+                shutil.rmtree(profile_dir, ignore_errors=True)
+            except Exception:
+                pass
+    return rendered
+
+
+def _iidb_slug(value: str) -> str:
+    text = unicodedata.normalize("NFKD", str(value or "").lower())
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+
+
+def _iidb_title_score(query: str, candidate: str) -> int:
+    left = _ps_normalize_title(query)
+    right = _ps_normalize_title(candidate)
+    if not left or not right:
+        return 0
+    if left == right:
+        return 1000
+    if left in right or right in left:
+        return 760
+    left_tokens = set(left.split())
+    right_tokens = set(right.split())
+    if not left_tokens or not right_tokens:
+        return 0
+    overlap = len(left_tokens & right_tokens)
+    union = len(left_tokens | right_tokens)
+    ratio = overlap / max(1, union)
+    return int(ratio * 600) if ratio >= 0.45 else 0
+
+
+def _iidb_is_game_page_url(url: str) -> bool:
+    try:
+        parsed = urlparse(urljoin(IIDB_BASE_URL + "/", str(url or "")))
+    except Exception:
+        return False
+    if parsed.netloc.lower() != urlparse(IIDB_BASE_URL).netloc.lower():
+        return False
+    path = parsed.path.lower()
+    if not path or path == "/":
+        return False
+    if any(token in path for token in ("/login", "/signup", "/account", "/upload", "/about", "/privacy", "/terms", "/api/")):
+        return False
+    if os.path.splitext(path)[1].lower() in IIDB_AUDIO_EXTENSIONS | IIDB_IMAGE_EXTENSIONS:
+        return False
+    return True
+
+
+def _iidb_extract_game_candidates(html: str, query: str, base_url: str) -> List[Dict[str, Any]]:
+    decoded = html_lib.unescape(str(html or "")).replace("\\/", "/")
+    candidates: List[Dict[str, Any]] = []
+    seen = set()
+    anchor_pattern = re.compile(r"<a\b[^>]*?href=[\"']([^\"']+)[\"'][^>]*>([\s\S]*?)</a>", re.IGNORECASE)
+    for match in anchor_pattern.finditer(decoded):
+        href = urljoin(base_url, match.group(1).strip())
+        title = _plain_html_text(match.group(2))
+        if not title or not _iidb_is_game_page_url(href):
+            continue
+        score = _iidb_title_score(query, title)
+        if score <= 0:
+            continue
+        key = href.split("#", 1)[0].rstrip("/").lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append({"title": title, "url": href, "score": score})
+
+    # Next/React payload fallback.  iiDB has not published its public API yet, so
+    # keep this deliberately schema-tolerant and only accept same-host page URLs.
+    for script_match in re.finditer(r"<script\b[^>]*type=[\"']application/(?:ld\+)?json[\"'][^>]*>([\s\S]*?)</script>", decoded, re.IGNORECASE):
+        raw_json = html_lib.unescape(script_match.group(1)).strip()
+        try:
+            payload = json.loads(raw_json)
+        except Exception:
+            continue
+        stack = [payload]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, list):
+                stack.extend(node)
+                continue
+            if not isinstance(node, dict):
+                continue
+            stack.extend(node.values())
+            title = next((str(node.get(k) or "").strip() for k in ("title", "name", "gameTitle", "displayName") if str(node.get(k) or "").strip()), "")
+            href = next((str(node.get(k) or "").strip() for k in ("url", "href", "path", "gameUrl") if str(node.get(k) or "").strip()), "")
+            if not href:
+                slug = str(node.get("slug") or "").strip()
+                if slug:
+                    href = f"/games/{slug}"
+            if not title or not href:
+                continue
+            href = urljoin(base_url, href)
+            if not _iidb_is_game_page_url(href):
+                continue
+            score = _iidb_title_score(query, title)
+            key = href.split("#", 1)[0].rstrip("/").lower()
+            if score > 0 and key not in seen:
+                seen.add(key)
+                candidates.append({"title": title, "url": href, "score": score})
+    return sorted(candidates, key=lambda item: (-int(item.get("score", 0)), str(item.get("title", ""))))[:12]
+
+
+def _iidb_asset_from_url(url: str, label: str, kind: str, page_url: str, title: str = "") -> Optional[Dict[str, Any]]:
+    absolute = urljoin(page_url, html_lib.unescape(str(url or "")).replace("\\/", "/").strip())
+    if not absolute.startswith(("http://", "https://")):
+        return None
+    lower_url = absolute.lower().split("?", 1)[0]
+    lower_label = str(label or "").lower()
+    extension = os.path.splitext(urlparse(lower_url).path)[1].lower()
+    if kind == "soundbite":
+        if extension in IIDB_IMAGE_EXTENSIONS:
+            return None
+        if extension not in IIDB_AUDIO_EXTENSIONS and not any(word in lower_label for word in ("soundbite", "sound bite", "jingle", "audio")):
+            return None
+        return {
+            "id": "iidb-soundbite-" + hashlib.sha1(absolute.encode("utf-8", "ignore")).hexdigest()[:12],
+            "title": title or "iiDB Soundbite",
+            "audio_url": absolute,
+            "preview_url": absolute,
+            "source": "iiDB Soundbite",
+            "page_url": page_url,
+        }
+    if kind == "banner":
+        if extension in IIDB_AUDIO_EXTENSIONS:
+            return None
+        if extension and extension not in IIDB_IMAGE_EXTENSIONS:
+            return None
+        if "banner" not in lower_label:
+            return None
+        if any(token in lower_url for token in ("cover", "boxart", "box-art", "poster", "icon", "logo")):
+            return None
+        return {
+            "id": "iidb-banner-" + hashlib.sha1(absolute.encode("utf-8", "ignore")).hexdigest()[:12],
+            "image_url": absolute,
+            "thumbnail_url": absolute,
+            "preview_url": absolute,
+            "source": "iiDB Asset",
+            "resolution": "iiDB Asset",
+            "page_url": page_url,
+        }
+    return None
+
+
+def _iidb_extract_assets_from_json(payload: Any, page_url: str, kind: str) -> List[Dict[str, Any]]:
+    results: List[Dict[str, Any]] = []
+    seen = set()
+    stack: List[Tuple[Any, str]] = [(payload, "")]
+    while stack:
+        node, inherited = stack.pop()
+        if isinstance(node, list):
+            stack.extend((item, inherited) for item in node)
+            continue
+        if not isinstance(node, dict):
+            continue
+        labels: List[str] = [inherited]
+        for key in ("type", "assetType", "asset_type", "category", "kind", "purpose", "label", "name", "title"):
+            value = node.get(key)
+            if isinstance(value, (str, int, float)):
+                labels.append(str(value))
+            elif isinstance(value, dict):
+                for sub_key in ("name", "title", "slug", "type"):
+                    if isinstance(value.get(sub_key), str):
+                        labels.append(value[sub_key])
+        label = " ".join(part for part in labels if part).strip()
+        title = str(node.get("title") or node.get("name") or "").strip()
+        for key, value in node.items():
+            if isinstance(value, (dict, list)):
+                stack.append((value, label))
+                continue
+            if not isinstance(value, str):
+                continue
+            key_lower = str(key).lower()
+            if key_lower not in {"url", "src", "href", "downloadurl", "download_url", "file", "fileurl", "file_url", "mediaurl", "media_url", "image", "audio"}:
+                continue
+            result = _iidb_asset_from_url(value, label + " " + key_lower, kind, page_url, title)
+            if not result:
+                continue
+            asset_url = str(result.get("audio_url") or result.get("image_url") or "")
+            dedupe = asset_url.split("?", 1)[0].lower()
+            if dedupe and dedupe not in seen:
+                seen.add(dedupe)
+                results.append(result)
+    return results
+
+
+def _iidb_extract_assets_from_html(html: str, page_url: str, kind: str) -> Tuple[List[Dict[str, Any]], List[str]]:
+    decoded = html_lib.unescape(str(html or "")).replace("\\/", "/")
+    results: List[Dict[str, Any]] = []
+    detail_links: List[str] = []
+    seen_assets = set()
+    seen_details = set()
+
+    # Structured payloads first, as they retain the category/type metadata needed
+    # to distinguish banners from the other iiDB image families.
+    for script_match in re.finditer(r"<script\b[^>]*>([\s\S]*?)</script>", decoded, re.IGNORECASE):
+        body = script_match.group(1).strip()
+        if not body or (not body.startswith("{") and not body.startswith("[")):
+            continue
+        try:
+            payload = json.loads(body)
+        except Exception:
+            continue
+        for result in _iidb_extract_assets_from_json(payload, page_url, kind):
+            asset_url = str(result.get("audio_url") or result.get("image_url") or "")
+            key = asset_url.split("?", 1)[0].lower()
+            if key and key not in seen_assets:
+                seen_assets.add(key)
+                results.append(result)
+
+    # HTML fallback.  Inspect a bounded context around every src/href so an image
+    # is accepted as a banner only when the page itself labels that card/section.
+    attr_pattern = re.compile(r"(?:src|href|data-src|data-url|data-download)=[\"']([^\"']+)[\"']", re.IGNORECASE)
+    for match in attr_pattern.finditer(decoded):
+        raw_url = match.group(1).strip()
+        before = decoded[max(0, match.start() - 1400):match.start()]
+        category_matches = list(re.finditer(r"\b(banners?|sound\s*bites?)\b", _plain_html_text(before), re.IGNORECASE))
+        nearest_category = category_matches[-1].group(1) if category_matches else ""
+        context = (nearest_category + " " + _plain_html_text(decoded[max(0, match.start() - 260):min(len(decoded), match.end() + 260)])).strip()
+        result = _iidb_asset_from_url(raw_url, context, kind, page_url)
+        if result:
+            asset_url = str(result.get("audio_url") or result.get("image_url") or "")
+            key = asset_url.split("?", 1)[0].lower()
+            if key and key not in seen_assets:
+                seen_assets.add(key)
+                results.append(result)
+            continue
+        context_lower = context.lower()
+        if ((kind == "soundbite" and any(word in context_lower for word in ("soundbite", "sound bite", "jingle"))) or (kind == "banner" and "banner" in context_lower)):
+            absolute = urljoin(page_url, raw_url)
+            if _iidb_is_game_page_url(absolute):
+                key = absolute.split("#", 1)[0].rstrip("/").lower()
+                if key not in seen_details:
+                    seen_details.add(key)
+                    detail_links.append(absolute)
+    return results, detail_links[:12]
+
+
+def _iidb_decode_page_text(value: str) -> str:
+    text = html_lib.unescape(str(value or "")).replace("\\/", "/")
+    replacements = {
+        r"\\+u0026": "&",
+        r"\\+u003d": "=",
+        r"\\+u002f": "/",
+        r"\\+u003a": ":",
+        r"\\+u0022": '"',
+        r"\\+u0027": "'",
+        r"\\+u003c": "<",
+        r"\\+u003e": ">",
+        r"\\+u0025": "%",
+    }
+    for escaped, plain in replacements.items():
+        text = re.sub(escaped, plain, text, flags=re.IGNORECASE)
+    return text.replace(r'\\"', '"')
+
+
+def _iidb_catalog_url(kind: str) -> str:
+    return IIDB_BASE_URL + ("/assets/soundbites" if kind == "soundbite" else "/assets/banners")
+
+
+def _iidb_explicit_game_id(query: str) -> Optional[int]:
+    raw = str(query or "").strip()
+    match = re.fullmatch(r"(?:iidb\s*[:#]?\s*)?(\d{2,10})", raw, re.IGNORECASE)
+    if not match:
+        return None
+    try:
+        value = int(match.group(1))
+    except Exception:
+        return None
+    return value if value > 0 else None
+
+
+def _iidb_catalog_request_urls(query: str, kind: str) -> List[str]:
+    # The website search already resolves a typed title to concrete result cards
+    # carrying iiDB's numeric game id. Use that search as the authoritative
+    # title->id step instead of asking users to discover ids themselves. The
+    # browser-facing q= page is fetched both as a normal document and as an RSC
+    # payload (see _iidb_request_rsc_text), because the visible cards are hydrated
+    # client-side on current iiDB builds.
+    categories = ["soundbites"] if kind == "soundbite" else ["banners", "heroes"]
+    encoded = urlencode({"q": str(query or "").strip()})
+    return [f"{IIDB_BASE_URL}/assets/{category}?{encoded}" for category in categories]
+
+
+def _iidb_collection_names(kind: str) -> List[str]:
+    return ["soundbites"] if kind == "soundbite" else ["banners", "heroes"]
+
+
+def _iidb_collection_url(game_id: int, collection: str) -> str:
+    return f"{IIDB_BASE_URL}/games/{int(game_id)}/{collection}"
+
+
+def _iidb_unwrap_url(raw_url: str, page_url: str) -> str:
+    value = _iidb_decode_page_text(str(raw_url or "").strip().strip('"\'')).rstrip("\\")
+    if not value or value.startswith(("data:", "blob:", "javascript:", "mailto:")):
+        return ""
+    absolute = urljoin(page_url, value)
+    try:
+        parsed = urlparse(absolute)
+        # Next/Image and similar image proxies commonly wrap the real source in
+        # a url/src parameter. Return the original asset instead of the proxy.
+        if parsed.path.lower().endswith("/_next/image") or "/_next/image" in parsed.path.lower():
+            params = parse_qs(parsed.query)
+            nested = (params.get("url") or params.get("src") or [""])[0]
+            if nested:
+                nested = unquote(nested)
+                return urljoin(page_url, nested)
+    except Exception:
+        return absolute
+    return absolute
+
+
+def _iidb_media_extension(url: str) -> str:
+    try:
+        path = unquote(urlparse(str(url or "")).path).lower()
+    except Exception:
+        path = str(url or "").lower()
+    return os.path.splitext(path)[1].lower()
+
+
+def _iidb_is_probable_media_url(url: str, kind: str, context: str = "", category_authoritative: bool = False) -> bool:
+    """Accept only iiDB's real game-media CDN contract.
+
+    The live catalog contains ordinary navigation, supporter and decorative links.
+    Treating any external URL near the word "download" as media caused false
+    Soundbites (for example a Ko-fi URL) and iiDB site artwork to appear as game
+    assets. Real iiDB game media observed in production uses:
+      assets.iisu.network/games/<id>/soundbite/<file>
+      assets.iisu.network/games/<id>/banner/<file>
+      assets.iisu.network/games/<id>/hero/<file>
+    Keep this boundary strict; a false positive is worse than returning no result.
+    """
+    absolute = str(url or "").strip()
+    if not absolute.startswith(("http://", "https://")):
+        return False
+    try:
+        parsed = urlparse(absolute)
+        host = parsed.netloc.lower().split(":", 1)[0]
+        path = unquote(parsed.path).lower()
+    except Exception:
+        return False
+    if host != "assets.iisu.network":
+        return False
+    match = re.search(r"/games/(\d+)/(soundbite|banner|hero)/([^/?#]+)", path, re.IGNORECASE)
+    if not match:
+        return False
+    family = match.group(2).lower()
+    extension = os.path.splitext(path)[1].lower()
+    if kind == "soundbite":
+        return family == "soundbite" and extension in IIDB_AUDIO_EXTENSIONS
+    return family in {"banner", "hero"} and extension in IIDB_IMAGE_EXTENSIONS
+
+def _iidb_duration_from_text(value: str) -> Optional[float]:
+    text = str(value or "")
+    match = re.search(r"(?<!\d)(\d{1,2}):(\d{2})(?!\d)", text)
+    if match:
+        seconds = int(match.group(1)) * 60 + int(match.group(2))
+        if 0 < seconds <= 3600:
+            return float(seconds)
+    match = re.search(r"(?:duration|length)\s*[:=]?\s*(\d+(?:\.\d+)?)\s*(?:s|sec|secs|seconds)\b", text, re.IGNORECASE)
+    if match:
+        try:
+            seconds = float(match.group(1))
+            if 0 < seconds <= 3600:
+                return seconds
+        except Exception:
+            pass
+    return None
+
+
+def _iidb_probe_audio_duration(url: str) -> Optional[float]:
+    """Best-effort duration probe without bundling ffprobe/ffmpeg.
+
+    iiDB Soundbites are commonly MP3. Read only the first 128 KiB, obtain the
+    total byte size from HTTP headers, find the first MPEG audio frame and use
+    its bitrate for a compact CBR duration estimate. WAV is handled from RIFF
+    headers. Other formats keep any duration exposed by iiDB's page metadata.
+    """
+    try:
+        request = Request(str(url), headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Accept": "*/*",
+            "Range": "bytes=0-131071",
+            "Referer": IIDB_BASE_URL + "/",
+        })
+        with urlopen(request, timeout=6) as response:
+            data = response.read(131072)
+            headers = response.headers
+            total = 0
+            content_range = str(headers.get("Content-Range", "") or "")
+            total_match = re.search(r"/(\d+)$", content_range)
+            if total_match:
+                total = int(total_match.group(1))
+            if not total:
+                try:
+                    total = int(headers.get("Content-Length", "0") or 0)
+                except Exception:
+                    total = 0
+    except Exception:
+        return None
+    if not data:
+        return None
+    path = unquote(urlparse(str(url)).path).lower()
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".wav" and data[:4] == b"RIFF" and data[8:12] == b"WAVE":
+        pos = 12
+        byte_rate = 0
+        data_size = 0
+        while pos + 8 <= len(data):
+            chunk = data[pos:pos+4]
+            size = int.from_bytes(data[pos+4:pos+8], "little", signed=False)
+            body = pos + 8
+            if chunk == b"fmt " and body + 12 <= len(data):
+                byte_rate = int.from_bytes(data[body+8:body+12], "little", signed=False)
+            elif chunk == b"data":
+                data_size = size
+                break
+            pos = body + size + (size & 1)
+        if byte_rate > 0 and data_size > 0:
+            return data_size / byte_rate
+        return None
+    if ext != ".mp3":
+        return None
+    offset = 0
+    if data[:3] == b"ID3" and len(data) >= 10:
+        size_bytes = data[6:10]
+        tag_size = ((size_bytes[0] & 0x7f) << 21) | ((size_bytes[1] & 0x7f) << 14) | ((size_bytes[2] & 0x7f) << 7) | (size_bytes[3] & 0x7f)
+        offset = min(len(data) - 4, 10 + tag_size)
+    mpeg1_l3 = [0,32,40,48,56,64,80,96,112,128,160,192,224,256,320,0]
+    mpeg2_l3 = [0,8,16,24,32,40,48,56,64,80,96,112,128,144,160,0]
+    for i in range(max(0, offset), max(0, len(data) - 4)):
+        b0,b1,b2,b3 = data[i:i+4]
+        if b0 != 0xff or (b1 & 0xe0) != 0xe0:
+            continue
+        version_bits = (b1 >> 3) & 0x03
+        layer_bits = (b1 >> 1) & 0x03
+        bitrate_index = (b2 >> 4) & 0x0f
+        sample_index = (b2 >> 2) & 0x03
+        if version_bits == 1 or layer_bits != 1 or bitrate_index in (0,15) or sample_index == 3:
+            continue
+        bitrate = (mpeg1_l3 if version_bits == 3 else mpeg2_l3)[bitrate_index]
+        if bitrate <= 0:
+            continue
+        if total <= 0:
+            return None
+        seconds = (total * 8.0) / (bitrate * 1000.0)
+        if 0.1 < seconds <= 3600:
+            return seconds
+    return None
+
+
+def _iidb_enrich_audio_durations(results: List[Dict[str, Any]]) -> None:
+    pending = [item for item in results if not item.get("duration_seconds") and item.get("audio_url")]
+    if not pending:
+        return
+    with ThreadPoolExecutor(max_workers=min(6, len(pending))) as executor:
+        future_map = {executor.submit(_iidb_probe_audio_duration, str(item.get("audio_url"))): item for item in pending}
+        for future in as_completed(future_map):
+            item = future_map[future]
+            try:
+                duration = future.result()
+            except Exception:
+                duration = None
+            if duration:
+                item["duration_seconds"] = round(float(duration), 2)
+
+
+def _iidb_result_from_catalog_media(url: str, kind: str, page_url: str, title: str, context: str = "") -> Optional[Dict[str, Any]]:
+    absolute = _iidb_unwrap_url(url, page_url)
+    if not _iidb_is_probable_media_url(absolute, kind, context, True):
+        return None
+    digest = hashlib.sha1(absolute.encode("utf-8", "ignore")).hexdigest()[:12]
+    if kind == "soundbite":
+        soundbite_title = _iidb_soundbite_display_name(context, title)
+        result: Dict[str, Any] = {
+            "id": "iidb-soundbite-" + digest,
+            "title": soundbite_title,
+            "soundbite_title": soundbite_title,
+            "game_title": title,
+            "audio_url": absolute,
+            "preview_url": absolute,
+            "source": "iiDB Soundbite",
+            "page_url": page_url,
+        }
+        duration = _iidb_duration_from_text(context)
+        if duration:
+            result["duration_seconds"] = duration
+        return result
+    try:
+        media_path = unquote(urlparse(absolute).path).lower()
+    except Exception:
+        media_path = absolute.lower()
+    asset_family = "Hero" if "/hero/" in media_path else "Banner"
+    dimensions = _dimension_from_text(context)
+    result: Dict[str, Any] = {
+        "id": "iidb-banner-" + digest,
+        "game_title": title,
+        "image_url": absolute,
+        "thumbnail_url": absolute,
+        "preview_url": absolute,
+        "source": f"iiDB {asset_family}",
+        "asset_type": asset_family.lower(),
+        "page_url": page_url,
+    }
+    if dimensions:
+        result["width"], result["height"] = dimensions
+        result["resolution"] = _dimension_label(dimensions)
+    return result
+
+
+def _iidb_context_text(block: str) -> str:
+    raw = str(block or "")
+    attrs = re.findall(
+        r'''(?:alt|title|aria-label|data-title|data-name)\s*=\s*["']([^"']+)["']''',
+        raw,
+        re.IGNORECASE,
+    )
+    plain = _plain_html_text(raw)
+    return " ".join(part for part in [plain, *attrs] if str(part or "").strip()).strip()
+
+
+def _iidb_context_for_url_match(decoded: str, start: int, end: int) -> str:
+    # Keep title matching scoped to one catalog card. The previous +/-1800-char
+    # window routinely spanned several neighboring cards, so one matching game
+    # title caused unrelated assets to be accepted too.
+    lower = decoded.lower()
+    left_bound = max(0, start - 4500)
+    right_bound = min(len(decoded), end + 4500)
+    candidates: List[Tuple[int, str]] = []
+    for tag in ("article", "li", "div", "a"):
+        open_token = "<" + tag
+        close_token = "</" + tag + ">"
+        left = lower.rfind(open_token, left_bound, start + 1)
+        if left < 0:
+            continue
+        closed_before = lower.rfind(close_token, left_bound, start)
+        if closed_before > left:
+            continue
+        right = lower.find(close_token, end, right_bound)
+        if right < 0:
+            continue
+        right += len(close_token)
+        size = right - left
+        if 0 < size <= 5500:
+            candidates.append((size, decoded[left:right]))
+    if candidates:
+        _size, block = min(candidates, key=lambda item: item[0])
+        context = _iidb_context_text(block)
+        if context:
+            return context
+
+    # RSC/Next payloads frequently serialize each card as a compact object. Use
+    # the nearest object boundary before falling back to a character window so a
+    # neighboring object's game title cannot validate this URL.
+    json_left = decoded.rfind("{", max(0, start - 1800), start + 1)
+    json_right = decoded.find("}", end, min(len(decoded), end + 1800))
+    if json_left >= 0 and json_right >= 0 and 0 < (json_right + 1 - json_left) <= 2200:
+        context = _iidb_context_text(decoded[json_left:json_right + 1])
+        if context:
+            return context
+
+    # Last-resort RSC fallback: intentionally very small. A larger window was
+    # responsible for cross-card matches on the global catalog.
+    return _iidb_context_text(decoded[max(0, start - 180):min(len(decoded), end + 180)])
+
+
+def _iidb_collect_url_contexts(html: str, page_url: str) -> List[Tuple[str, str]]:
+    decoded = _iidb_decode_page_text(html)
+    matches: List[Tuple[int, int, str, Optional[str]]] = []
+
+    # Capture full anchors first so their visible card label wins the de-duplication
+    # race over the generic href/src matcher below.
+    anchor_pattern = re.compile(
+        r'''<a\b[^>]*?href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)</a>''',
+        re.IGNORECASE,
+    )
+    for match in anchor_pattern.finditer(decoded):
+        matches.append((match.start(), match.end(), match.group(1), _iidb_context_text(match.group(0))))
+
+    attr_pattern = re.compile(r'''(?:src|href|data-src|data-url|data-download|data-file|poster)\s*=\s*["']([^"']+)["']''', re.IGNORECASE)
+    for match in attr_pattern.finditer(decoded):
+        matches.append((match.start(), match.end(), match.group(1), None))
+
+    # App-router/RSC payloads often contain URLs as plain escaped strings rather
+    # than HTML attributes. Capture those too, but with the same tight context.
+    raw_url_pattern = re.compile(r'''https?://[^"'<>\s\)\]]+''', re.IGNORECASE)
+    for match in raw_url_pattern.finditer(decoded):
+        matches.append((match.start(), match.end(), match.group(0), None))
+
+    relative_pattern = re.compile(r'''["']((?:/[^"']*)?(?:assets|media|uploads|files|download)[^"']*)["']''', re.IGNORECASE)
+    for match in relative_pattern.finditer(decoded):
+        value = match.group(1)
+        if value.startswith("/"):
+            matches.append((match.start(), match.end(), value, None))
+
+    output: List[Tuple[str, str]] = []
+    seen = set()
+    for start, end, raw_url, explicit_context in sorted(matches, key=lambda item: item[0]):
+        absolute = _iidb_unwrap_url(raw_url, page_url)
+        if not absolute:
+            continue
+        key = absolute.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        context = explicit_context or _iidb_context_for_url_match(decoded, start, end)
+        output.append((absolute, context))
+    return output
+
+
+def _iidb_soundbite_display_name(value: str, game_title: str) -> str:
+    raw = _iidb_decode_page_text(str(value or ""))
+    candidates: List[str] = []
+    # Prefer semantic page/card labels when markup is available.
+    patterns = [
+        r'''<meta\b[^>]*(?:property|name)=["'](?:og:title|twitter:title)["'][^>]*content=["']([^"']+)["']''',
+        r'''<title\b[^>]*>([\s\S]*?)</title>''',
+        r'''<h[1-4]\b[^>]*>([\s\S]*?)</h[1-4]>''',
+        r'''(?:aria-label|title|data-title|data-name)\s*=\s*["']([^"']+)["']''',
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, raw, re.IGNORECASE):
+            candidates.append(_plain_html_text(match.group(1)))
+    # JSON/RSC cards often expose the soundbite name as a field instead of a
+    # heading. Read only label fields from the current card/object.
+    json_name_pattern = re.compile(
+        r"[\"'](?:soundbiteTitle|soundbite_title|soundbiteName|soundbite_name|assetName|asset_name|displayName|display_name|name|label)[\"']\s*:\s*[\"']([^\"']+)[\"']",
+        re.IGNORECASE,
+    )
+    for match in json_name_pattern.finditer(raw):
+        candidates.append(_plain_html_text(match.group(1)))
+    plain = _plain_html_text(raw)
+    candidates.extend(re.split(r'''[\n\r|•·]+''', plain))
+
+    game_norm = _ps_normalize_title(game_title)
+    generic = {
+        "iidb", "soundbite", "soundbites", "sound bite", "sound bites", "audio",
+        "preview", "play", "pause", "download", "asset", "assets", "listen",
+    }
+    ranked: List[Tuple[int, str]] = []
+    for original in candidates:
+        candidate = html_lib.unescape(str(original or "")).strip()
+        if not candidate or len(candidate) > 180:
+            continue
+        candidate = re.sub(r'''\b\d{1,2}:\d{2}(?::\d{2})?\b''', " ", candidate)
+        if game_title:
+            candidate = re.sub(re.escape(game_title), " ", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r'''\biiDB\b''', " ", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r'''\bSound\s*Bites?\b''', " ", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r'''\b(?:audio|preview|download|listen)\b''', " ", candidate, flags=re.IGNORECASE)
+        candidate = re.sub(r'''\s+''', " ", candidate).strip(" -–—|:·•()[]{}")
+        if not candidate or len(candidate) < 2 or len(candidate) > 90:
+            continue
+        norm = _ps_normalize_title(candidate)
+        if not norm or norm == game_norm or norm in generic:
+            continue
+        if any(token in candidate.lower() for token in ("http://", "https://", "javascript", "_next/")):
+            continue
+        words = [word for word in re.split(r'''\s+''', candidate) if word]
+        if words and all(word.lower().strip(".,:;!?()[]{}") in generic for word in words):
+            continue
+        score = 120 - len(candidate)
+        if 2 <= len(words) <= 8:
+            score += 30
+        ranked.append((score, candidate))
+    if not ranked:
+        return "iiDB Soundbite"
+    ranked.sort(key=lambda item: (-item[0], item[1].lower()))
+    return ranked[0][1]
+
+def _iidb_is_asset_detail_url(url: str, kind: str) -> bool:
+    try:
+        parsed = urlparse(str(url or ""))
+    except Exception:
+        return False
+    if parsed.netloc.lower() != urlparse(IIDB_BASE_URL).netloc.lower():
+        return False
+    path = parsed.path.rstrip("/").lower()
+    category_roots = {
+        "/assets/banners",
+        "/assets/heroes",
+        "/assets/soundbites",
+    }
+    if path in category_roots:
+        return False
+    # iiDB can expose concrete cards beneath any of the three categories even
+    # while Launch Curtain is searching another related category for the game id.
+    if any(path.startswith(root + "/") for root in category_roots):
+        return True
+    if path.startswith("/asset/"):
+        return True
+    parts = [part for part in path.split("/") if part]
+    if len(parts) == 2 and parts[0] == "assets" and parts[1] not in {
+        "banners", "heroes", "soundbites", "boxarts", "covers", "icons", "logos"
+    }:
+        return True
+    return path.startswith("/assets/") and any(token in path for token in ("/banner", "/hero", "/soundbite"))
+
+
+def _iidb_is_catalog_candidate_url(url: str, kind: str) -> bool:
+    """Accept only links actually exposed by iiDB cards; never guess routes."""
+    absolute = _iidb_unwrap_url(url, _iidb_catalog_url(kind))
+    if not absolute:
+        return False
+    try:
+        parsed = urlparse(absolute)
+    except Exception:
+        return False
+    if parsed.netloc.lower() != urlparse(IIDB_BASE_URL).netloc.lower():
+        return False
+    path = parsed.path.rstrip("/").lower()
+    if not path or path == "":
+        return False
+    catalog_path = urlparse(_iidb_catalog_url(kind)).path.rstrip("/").lower()
+    if path == catalog_path:
+        return False
+    if os.path.splitext(path)[1].lower() in IIDB_AUDIO_EXTENSIONS | IIDB_IMAGE_EXTENSIONS:
+        return False
+    if any(token in path for token in (
+        "/login", "/signup", "/account", "/upload", "/about", "/privacy",
+        "/terms", "/api/", "/_next/", "/search", "/settings", "/profile",
+    )):
+        return False
+    if _iidb_is_asset_detail_url(absolute, kind):
+        return True
+    # Some iiDB catalog builds route a card through the game detail page rather
+    # than an asset-specific page. Following a *discovered* /game(s)/ link is
+    # safe because the fetched page is title-verified before any media is used.
+    parts = [part for part in path.split("/") if part]
+    return bool(parts and parts[0] in {"game", "games", "title", "titles"} and len(parts) >= 2)
+
+
+def _iidb_detail_link_occurrences(html: str, page_url: str, kind: str) -> List[Tuple[int, int, str]]:
+    """Return positioned iiDB asset-detail links without trusting card markup."""
+    decoded = _iidb_decode_page_text(html)
+    matches: List[Tuple[int, int, str]] = []
+    patterns = [
+        re.compile(r'''(?:href|data-url|data-href)\s*=\s*[\"']([^\"']+)[\"']''', re.IGNORECASE),
+        re.compile(r'''[\"']((?:/assets/|/asset/)[^\"']+)[\"']''', re.IGNORECASE),
+        re.compile(r'''https?://[^\"'<>\s\)\]]+''', re.IGNORECASE),
+    ]
+    for pattern in patterns:
+        for match in pattern.finditer(decoded):
+            raw = match.group(1) if match.lastindex else match.group(0)
+            absolute = _iidb_unwrap_url(raw, page_url)
+            if absolute and _iidb_is_catalog_candidate_url(absolute, kind):
+                matches.append((match.start(), match.end(), absolute))
+    output: List[Tuple[int, int, str]] = []
+    seen = set()
+    for start, end, absolute in sorted(matches, key=lambda item: item[0]):
+        key = absolute.split('#', 1)[0].rstrip('/').lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        output.append((start, end, absolute))
+    return output
+
+
+def _iidb_catalog_card_contexts(html: str, page_url: str, kind: str) -> List[Tuple[str, str, int]]:
+    """Split a dense catalog by neighboring detail links instead of arbitrary chars."""
+    decoded = _iidb_decode_page_text(html)
+    links = _iidb_detail_link_occurrences(decoded, page_url, kind)
+    output: List[Tuple[str, str, int]] = []
+    for index, (start, end, absolute) in enumerate(links):
+        prev_end = links[index - 1][1] if index > 0 else max(0, start - 3500)
+        next_start = links[index + 1][0] if index + 1 < len(links) else min(len(decoded), end + 3500)
+        left = max(0, (prev_end + start) // 2)
+        right = min(len(decoded), (end + next_start) // 2)
+        left = max(0, min(left, start) - 220)
+        right = min(len(decoded), max(right, end) + 220)
+        block = decoded[left:right]
+        context = _iidb_context_text(block)
+        output.append((absolute, context, start))
+    return output
+
+
+def _iidb_query_nearby_detail_links(html: str, page_url: str, query: str, kind: str) -> List[str]:
+    """Fallback for RSC catalogs: title first, then nearby concrete asset links."""
+    decoded = _iidb_decode_page_text(html)
+    links = _iidb_detail_link_occurrences(decoded, page_url, kind)
+    if not links:
+        return []
+    query_tokens = [token for token in _ps_normalize_title(query).split() if len(token) >= 2]
+    if not query_tokens:
+        return []
+    probes: List[int] = []
+    lower = decoded.lower()
+    raw_query = html_lib.unescape(str(query or '')).strip().lower()
+    if raw_query:
+        pos = 0
+        while True:
+            hit = lower.find(raw_query, pos)
+            if hit < 0:
+                break
+            probes.append(hit)
+            pos = hit + max(1, len(raw_query))
+    # Diacritic/punctuation fallback: anchor on the longest distinctive token.
+    if not probes:
+        anchor = max(query_tokens, key=len)
+        for match in re.finditer(re.escape(anchor), lower):
+            probes.append(match.start())
+            if len(probes) >= 24:
+                break
+    selected: List[Tuple[int, str]] = []
+    seen = set()
+    for probe in probes[:32]:
+        for start, end, absolute in links:
+            distance = 0 if start <= probe <= end else min(abs(start - probe), abs(end - probe))
+            if distance > 2600:
+                continue
+            neighborhood = decoded[max(0, min(start, probe) - 450):min(len(decoded), max(end, probe) + 450)]
+            score = _iidb_title_score(query, _iidb_context_text(neighborhood))
+            if score < 300 and _iidb_slug(query) not in _iidb_slug(neighborhood):
+                continue
+            key = absolute.split('#', 1)[0].rstrip('/').lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            selected.append((distance, absolute))
+    selected.sort(key=lambda item: item[0])
+    return [url for _distance, url in selected[:16]]
+
+
+def _iidb_query_nearby_direct_media(html: str, page_url: str, query: str, kind: str) -> List[Dict[str, Any]]:
+    """Find direct media closest to the requested title when no detail route exists."""
+    decoded = _iidb_decode_page_text(html)
+    lower = decoded.lower()
+    raw_query = html_lib.unescape(str(query or "")).strip().lower()
+    probes: List[int] = []
+    if raw_query:
+        pos = 0
+        while True:
+            hit = lower.find(raw_query, pos)
+            if hit < 0:
+                break
+            probes.append(hit)
+            pos = hit + max(1, len(raw_query))
+    if not probes:
+        tokens = [token for token in _ps_normalize_title(query).split() if len(token) >= 3]
+        if tokens:
+            anchor_token = max(tokens, key=len)
+            probes = [match.start() for match in re.finditer(re.escape(anchor_token), lower)][:24]
+    if not probes:
+        return []
+
+    positioned: List[Tuple[int, int, str]] = []
+    patterns = [
+        re.compile(r'''(?:src|href|data-src|data-url|data-download|data-file|poster)\s*=\s*["']([^"']+)["']''', re.IGNORECASE),
+        re.compile(r'''https?://[^"'<>\s\)\]]+''', re.IGNORECASE),
+    ]
+    for pattern in patterns:
+        for match in pattern.finditer(decoded):
+            raw = match.group(1) if match.lastindex else match.group(0)
+            absolute = _iidb_unwrap_url(raw, page_url)
+            if absolute and not _iidb_is_catalog_candidate_url(absolute, kind):
+                positioned.append((match.start(), match.end(), absolute))
+
+    output: List[Dict[str, Any]] = []
+    seen = set()
+    category_word = "soundbite audio preview download" if kind == "soundbite" else "banner image asset download"
+    ranked: List[Tuple[int, int, int, str, int]] = []
+    for probe in probes[:24]:
+        for start, end, absolute in positioned:
+            distance = 0 if start <= probe <= end else min(abs(start - probe), abs(end - probe))
+            if distance <= 2200:
+                ranked.append((distance, start, end, absolute, probe))
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    for distance, start, end, absolute, probe in ranked:
+        key = absolute.split("?", 1)[0].lower()
+        if not key or key in seen:
+            continue
+        neighborhood = decoded[max(0, min(start, probe) - 500):min(len(decoded), max(end, probe) + 500)]
+        score = _iidb_title_score(query, _iidb_context_text(neighborhood))
+        if score < 300 and _iidb_slug(query) not in _iidb_slug(neighborhood):
+            continue
+        result = _iidb_result_from_catalog_media(absolute, kind, page_url, query, neighborhood + " " + category_word)
+        if result:
+            seen.add(key)
+            output.append(result)
+        if len(output) >= 12:
+            break
+    return output
+
+
+def _iidb_detail_page_matches_query(html: str, page_url: str, query: str) -> bool:
+    """Final guard: a detail page must identify the requested game."""
+    decoded = _iidb_decode_page_text(html)
+    candidates: List[str] = []
+    patterns = [
+        r'''<meta\b[^>]*(?:property|name)=[\"'](?:og:title|twitter:title)[\"'][^>]*content=[\"']([^\"']+)[\"']''',
+        r'''<title\b[^>]*>([\s\S]*?)</title>''',
+        r'''<h[1-4]\b[^>]*>([\s\S]*?)</h[1-4]>''',
+        r'''[\"'](?:gameTitle|game_title|gameName|game_name|romTitle|rom_title)[\"']\s*:\s*[\"']([^\"']+)[\"']''',
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, decoded, re.IGNORECASE):
+            candidates.append(_plain_html_text(match.group(1)))
+    query_slug = _iidb_slug(query)
+    for candidate in candidates:
+        if _iidb_title_score(query, candidate) >= 500:
+            return True
+        if query_slug and query_slug in _iidb_slug(candidate):
+            return True
+    # If the detail page exposes an explicit title/game heading, a mismatch is
+    # authoritative: do not let unrelated navigation/catalog text override it.
+    if candidates:
+        return False
+    if query_slug:
+        compact = _iidb_slug(_plain_html_text(decoded))
+        if query_slug in compact:
+            return True
+        if query_slug in _iidb_slug(decoded):
+            return True
+    return False
+
+
+def _iidb_parse_catalog_page(html: str, page_url: str, query: str, kind: str) -> Tuple[List[Dict[str, Any]], List[str]]:
+    decoded = _iidb_decode_page_text(html)
+    results: List[Dict[str, Any]] = []
+    detail_links: List[str] = []
+    seen_assets = set()
+    seen_details = set()
+    category_word = "soundbite" if kind == "soundbite" else "banner"
+
+    for absolute, context, _position in _iidb_catalog_card_contexts(decoded, page_url, kind):
+        score = _iidb_title_score(query, context)
+        if score < 300 and _iidb_slug(query) not in _iidb_slug(context):
+            continue
+        key = absolute.split("#", 1)[0].rstrip("/").lower()
+        if key not in seen_details:
+            seen_details.add(key)
+            detail_links.append(absolute)
+
+    if not detail_links:
+        for absolute in _iidb_query_nearby_detail_links(decoded, page_url, query, kind):
+            key = absolute.split("#", 1)[0].rstrip("/").lower()
+            if key not in seen_details:
+                seen_details.add(key)
+                detail_links.append(absolute)
+
+    for absolute, context in _iidb_collect_url_contexts(decoded, page_url):
+        if _iidb_is_catalog_candidate_url(absolute, kind):
+            continue
+        score = _iidb_title_score(query, context)
+        if score < 500 and _iidb_slug(query) not in _iidb_slug(context):
+            continue
+        result = _iidb_result_from_catalog_media(absolute, kind, page_url, query, context + " " + category_word)
+        if not result:
+            continue
+        asset_url = str(result.get("audio_url") or result.get("image_url") or "")
+        key = asset_url.split("?", 1)[0].lower()
+        if key and key not in seen_assets:
+            seen_assets.add(key)
+            results.append(result)
+
+    if not detail_links and not results:
+        for result in _iidb_query_nearby_direct_media(decoded, page_url, query, kind):
+            asset_url = str(result.get("audio_url") or result.get("image_url") or "")
+            key = asset_url.split("?", 1)[0].lower()
+            if key and key not in seen_assets:
+                seen_assets.add(key)
+                results.append(result)
+
+    _log_info(
+        f"iiDB catalog filter kind={kind} title={query} "
+        f"candidate_links={len(_iidb_detail_link_occurrences(decoded, page_url, kind))} "
+        f"matched_links={len(detail_links)} direct={len(results)}"
+    )
+    return results, detail_links[:16]
+
+def _iidb_parse_asset_detail_page(html: str, page_url: str, query: str, kind: str) -> List[Dict[str, Any]]:
+    decoded = _iidb_decode_page_text(html)
+    results: List[Dict[str, Any]] = []
+    seen = set()
+    category_word = "soundbite audio download" if kind == "soundbite" else "banner image asset download"
+    detail_soundbite_title = _iidb_soundbite_display_name(decoded, query) if kind == "soundbite" else ""
+
+    # First use the existing structured parser with an explicit category marker.
+    for script_match in re.finditer(r"<script\b[^>]*>([\s\S]*?)</script>", decoded, re.IGNORECASE):
+        body = script_match.group(1).strip()
+        if not body or (not body.startswith("{") and not body.startswith("[")):
+            continue
+        try:
+            payload = json.loads(body)
+        except Exception:
+            continue
+        for result in _iidb_extract_assets_from_json(payload, page_url, kind):
+            asset_url = str(result.get("audio_url") or result.get("image_url") or "")
+            key = asset_url.split("?", 1)[0].lower()
+            if key and key not in seen:
+                seen.add(key)
+                result["game_title"] = query
+                if kind == "soundbite":
+                    candidate_title = str(result.get("title") or "").strip()
+                    if not candidate_title or candidate_title == "iiDB Soundbite" or _ps_normalize_title(candidate_title) == _ps_normalize_title(query):
+                        candidate_title = detail_soundbite_title
+                    result["title"] = candidate_title or "iiDB Soundbite"
+                    result["soundbite_title"] = result["title"]
+                results.append(result)
+
+    for absolute, context in _iidb_collect_url_contexts(decoded, page_url):
+        if _iidb_is_asset_detail_url(absolute, kind):
+            continue
+        result = _iidb_result_from_catalog_media(absolute, kind, page_url, query, context + " " + category_word)
+        if not result:
+            continue
+        asset_url = str(result.get("audio_url") or result.get("image_url") or "")
+        key = asset_url.split("?", 1)[0].lower()
+        if key and key not in seen:
+            seen.add(key)
+            if kind == "soundbite":
+                candidate_title = str(result.get("soundbite_title") or result.get("title") or "").strip()
+                if not candidate_title or candidate_title == "iiDB Soundbite":
+                    candidate_title = detail_soundbite_title
+                result["title"] = candidate_title or "iiDB Soundbite"
+                result["soundbite_title"] = result["title"]
+                result["game_title"] = query
+            results.append(result)
+
+    # Prefer originals/downloads over thumbnails/proxies when both exist.
+    def result_priority(item: Dict[str, Any]) -> Tuple[int, str]:
+        url = str(item.get("audio_url") or item.get("image_url") or "").lower()
+        score = 0
+        if any(token in url for token in ("download", "original", "/files/", "/media/", "/storage/", "/uploads/")):
+            score += 100
+        if any(token in url for token in ("thumb", "thumbnail", "preview", "_next/image")):
+            score -= 40
+        return (-score, url)
+
+    return sorted(results, key=result_priority)
+
+
+
+def _iidb_game_id_candidates_from_page(html: str, page_url: str, query: str) -> List[Tuple[int, int]]:
+    """Resolve likely iiDB game ids from a title-filtered category page."""
+    decoded = _iidb_decode_page_text(html)
+    query_slug = _iidb_slug(query)
+    scores: Dict[int, int] = {}
+
+    # A q= category response is our strongest discovery signal. It can expose the
+    # id either in /games/<id>/<collection> links or directly in assets.iisu.net
+    # media URLs such as /games/34085/soundbite/<file>.mp3.
+    try:
+        page_query = (parse_qs(urlparse(page_url).query).get("q") or [""])[0]
+    except Exception:
+        page_query = ""
+    filtered_for_query = bool(page_query and _iidb_slug(unquote(page_query)) == query_slug)
+    page_contains_query = bool(query_slug and query_slug in _iidb_slug(_plain_html_text(decoded)))
+
+    route_re = re.compile(
+        r'(?:https?://[^"\'<>\\\s]+)?/games/(\d+)(?:/(?:soundbites|banners|heroes|soundbite|banner|hero))?',
+        re.IGNORECASE,
+    )
+    for match in route_re.finditer(decoded):
+        try:
+            game_id = int(match.group(1))
+        except Exception:
+            continue
+        context = _iidb_context_for_url_match(decoded, match.start(), match.end())
+        score = _iidb_title_score(query, context)
+        if query_slug and query_slug in _iidb_slug(context):
+            score = max(score, 760)
+        elif filtered_for_query and page_contains_query:
+            # On the filtered category page some RSC payloads place the game title
+            # away from the media URL. Trust the page-level q= filter, but below an
+            # explicit local title match.
+            score = max(score, 620)
+        elif filtered_for_query:
+            score = max(score, 460)
+        if score >= 300:
+            route_text = match.group(0).lower()
+            if any('/' + name in route_text for name in ("soundbites", "banners", "heroes")):
+                score += 90
+            elif any('/' + name in route_text for name in ("soundbite", "banner", "hero")):
+                score += 70
+            scores[game_id] = max(scores.get(game_id, 0), score)
+
+    # React/RSC payloads can serialize title and gameId separately.
+    lower = html_lib.unescape(decoded).lower()
+    raw_query = html_lib.unescape(str(query or "")).strip().lower()
+    probes: List[int] = []
+    if raw_query:
+        start = 0
+        while True:
+            pos = lower.find(raw_query, start)
+            if pos < 0:
+                break
+            probes.append(pos)
+            start = pos + max(1, len(raw_query))
+    id_patterns = [
+        re.compile(r'["\'](?:gameId|game_id|gameID|id)["\']\s*[:=]\s*["\']?(\d{2,10})', re.IGNORECASE),
+    ]
+    for pos in probes[:40]:
+        local_start = max(0, pos - 2200)
+        local_end = min(len(decoded), pos + 2200)
+        local = decoded[local_start:local_end]
+        local_context = _iidb_context_text(local)
+        local_score = max(650, _iidb_title_score(query, local_context))
+        for pattern in id_patterns:
+            for match in pattern.finditer(local):
+                try:
+                    game_id = int(match.group(1))
+                except Exception:
+                    continue
+                if game_id > 0:
+                    scores[game_id] = max(scores.get(game_id, 0), local_score + 80)
+
+        # Title-centric RSC fallback. On the real unfiltered category pages the
+        # game title and its media URL can be serialized as sibling values rather
+        # than one HTML card. In that case look for /games/<id>/ routes close to
+        # the exact title occurrence. Only promote a unique nearby id, or a clearly
+        # nearest id, so neighboring catalog cards cannot contaminate the match.
+        nearby: Dict[int, int] = {}
+        title_center = pos
+        for route_match in route_re.finditer(local):
+            try:
+                game_id = int(route_match.group(1))
+            except Exception:
+                continue
+            global_center = local_start + (route_match.start() + route_match.end()) // 2
+            distance = abs(global_center - title_center)
+            previous = nearby.get(game_id)
+            if previous is None or distance < previous:
+                nearby[game_id] = distance
+        ordered_nearby = sorted(nearby.items(), key=lambda item: (item[1], item[0]))
+        if ordered_nearby:
+            nearest_id, nearest_distance = ordered_nearby[0]
+            second_distance = ordered_nearby[1][1] if len(ordered_nearby) > 1 else None
+            unambiguous = len(ordered_nearby) == 1 or second_distance is None or nearest_distance * 1.8 < second_distance
+            if nearest_distance <= 1400 and unambiguous:
+                proximity_score = 920 if nearest_distance <= 450 else 840 if nearest_distance <= 900 else 760
+                scores[nearest_id] = max(scores.get(nearest_id, 0), proximity_score)
+
+    ranked = sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:12]
+    _log_info(
+        f"iiDB game-id resolver title={query} page={page_url} filtered={filtered_for_query} "
+        f"page_title_match={page_contains_query} candidates={ranked}"
+    )
+    return ranked
+
+
+def _iidb_collection_media_matches(url: str, kind: str, collection: str) -> bool:
+    try:
+        path = unquote(urlparse(str(url or "")).path).lower()
+    except Exception:
+        return False
+    extension = os.path.splitext(path)[1].lower()
+    if kind == "soundbite":
+        return "/games/" in path and "/soundbite/" in path and extension in IIDB_AUDIO_EXTENSIONS
+    if extension not in IIDB_IMAGE_EXTENSIONS:
+        return False
+    if collection == "heroes":
+        return "/games/" in path and "/hero/" in path
+    return "/games/" in path and "/banner/" in path
+
+
+def _iidb_is_thumbnail_url(url: str) -> bool:
+    try:
+        parsed = urlparse(str(url or ""))
+        lower = unquote(parsed.path).lower()
+        query = parse_qs(parsed.query)
+    except Exception:
+        return False
+    if any(token in lower for token in ("/thumb/", "/thumbs/", "thumbnail", "-thumb", "_thumb", "/preview/", "-preview", "_preview")):
+        return True
+    for key in ("w", "width"):
+        try:
+            values = query.get(key) or []
+            if values and 0 < int(values[0]) <= 960:
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def _iidb_parse_detail_original_media(html: str, page_url: str, query: str, kind: str, collection: str, game_id: int) -> List[Dict[str, Any]]:
+    decoded = _iidb_decode_page_text(html)
+    family = "soundbite" if kind == "soundbite" else ("hero" if collection == "heroes" else "banner")
+    pattern = re.compile(
+        r'''https?://assets\.iisu\.network/games/%d/%s/[^"'<>\\\s]+''' % (int(game_id), family),
+        re.IGNORECASE,
+    )
+    output: List[Dict[str, Any]] = []
+    seen = set()
+    for match in pattern.finditer(decoded):
+        absolute = _iidb_unwrap_url(match.group(0), page_url)
+        if not _iidb_collection_media_matches(absolute, kind, collection):
+            continue
+        key = absolute.split("?", 1)[0].lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        context = _iidb_context_for_url_match(decoded, match.start(), match.end())
+        item = _iidb_result_from_catalog_media(absolute, kind, page_url, query, context)
+        if not item:
+            continue
+        item["game_title"] = query
+        item["iidb_collection"] = collection
+        item["iidb_game_id"] = int(game_id)
+        item["iidb_original"] = True
+        if kind != "soundbite":
+            item["source"] = "iiDB Hero" if collection == "heroes" else "iiDB Banner"
+            item["asset_type"] = "hero" if collection == "heroes" else "banner"
+        output.append(item)
+    output.sort(key=lambda item: (
+        1 if _iidb_is_thumbnail_url(str(item.get("audio_url") or item.get("image_url") or "")) else 0,
+        str(item.get("audio_url") or item.get("image_url") or "").lower(),
+    ))
+    return output
+
+
+def _iidb_parse_game_collection(html: str, page_url: str, query: str, kind: str, collection: str) -> List[Dict[str, Any]]:
+    """Extract media from /games/<id>/<collection>, preferring detail-page originals."""
+    decoded = _iidb_decode_page_text(html)
+    try:
+        id_match = re.search(r"/games/(\d+)/", urlparse(page_url).path, re.IGNORECASE)
+        game_id = int(id_match.group(1)) if id_match else 0
+    except Exception:
+        game_id = 0
+
+    detail_urls: List[str] = []
+    detail_seen = set()
+    for _start, _end, detail_url in _iidb_detail_link_occurrences(decoded, page_url, kind):
+        try:
+            path = urlparse(detail_url).path.lower()
+        except Exception:
+            continue
+        if collection == "soundbites" and "soundbite" not in path:
+            continue
+        if collection == "banners" and "banner" not in path:
+            continue
+        if collection == "heroes" and "hero" not in path:
+            continue
+        key = detail_url.split("#", 1)[0].rstrip("/").lower()
+        if key and key not in detail_seen:
+            detail_seen.add(key)
+            detail_urls.append(detail_url)
+
+    detail_results: List[Dict[str, Any]] = []
+    if game_id > 0 and detail_urls:
+        selected_details = detail_urls[:18]
+        with ThreadPoolExecutor(max_workers=min(6, len(selected_details))) as executor:
+            future_map = {executor.submit(_iidb_request_text, url, 7): url for url in selected_details}
+            for future in as_completed(future_map):
+                detail_url = future_map[future]
+                try:
+                    detail_html = future.result()
+                except Exception as error:
+                    _log_info(f"iiDB collection detail miss game_id={game_id} collection={collection} url={detail_url}: {error}")
+                    continue
+                parsed = _iidb_parse_detail_original_media(detail_html, detail_url, query, kind, collection, game_id)
+                if parsed:
+                    _log_info(f"iiDB collection detail originals game_id={game_id} collection={collection} url={detail_url} assets={len(parsed)}")
+                    detail_results.extend(parsed)
+
+    grid_results: List[Dict[str, Any]] = []
+    grid_seen = set()
+    category_word = (
+        "soundbite audio download"
+        if kind == "soundbite"
+        else ("hero background image asset" if collection == "heroes" else "banner background image asset")
+    )
+    for absolute, context in _iidb_collect_url_contexts(decoded, page_url):
+        if not _iidb_collection_media_matches(absolute, kind, collection):
+            continue
+        result = _iidb_result_from_catalog_media(absolute, kind, page_url, query, context + " " + category_word)
+        if not result:
+            continue
+        media_url = str(result.get("audio_url") or result.get("image_url") or "")
+        key = media_url.split("?", 1)[0].lower()
+        if not key or key in grid_seen:
+            continue
+        grid_seen.add(key)
+        result["game_title"] = query
+        result["iidb_collection"] = collection
+        if game_id:
+            result["iidb_game_id"] = game_id
+        if kind != "soundbite":
+            result["source"] = "iiDB Hero" if collection == "heroes" else "iiDB Banner"
+            result["asset_type"] = "hero" if collection == "heroes" else "banner"
+        grid_results.append(result)
+
+    # When a detail page gave us originals, do not keep the 960x320 grid preview.
+    preferred = detail_results if (kind != "soundbite" and detail_results) else (detail_results + grid_results)
+    if kind != "soundbite" and not detail_results:
+        preferred = grid_results
+    merged: List[Dict[str, Any]] = []
+    seen = set()
+    for item in preferred:
+        media_url = str(item.get("audio_url") or item.get("image_url") or "")
+        key = media_url.split("?", 1)[0].lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    return merged
+
+
+def _iidb_enrich_image_dimensions(results: List[Dict[str, Any]]) -> None:
+    """Populate real WxH metadata for iiDB Banner/Hero search results."""
+    by_url: Dict[str, List[Dict[str, Any]]] = {}
+    for item in results:
+        if item.get("width") and item.get("height"):
+            continue
+        url = str(item.get("image_url") or "").strip()
+        if not url:
+            continue
+        by_url.setdefault(url, []).append(item)
+    if not by_url:
+        return
+    with ThreadPoolExecutor(max_workers=min(6, len(by_url))) as executor:
+        future_map = {
+            executor.submit(_fetch_remote_image_dimensions, url, 2 * 1024 * 1024): url
+            for url in by_url
+        }
+        for future in as_completed(future_map):
+            url = future_map[future]
+            try:
+                dimensions = future.result()
+            except Exception:
+                dimensions = None
+            if not dimensions:
+                continue
+            for item in by_url.get(url, []):
+                item["width"], item["height"] = dimensions
+                item["resolution"] = _dimension_label(dimensions)
+
+
+IIDB_BULK_RESOLUTION_PRIORITY: List[Tuple[int, int]] = [
+    (3840, 2160),
+    (2560, 1440),
+    (1920, 1080),
+    (3840, 1240),
+    (1280, 720),
+    (1920, 620),
+]
+
+
+def _iidb_bulk_asset_priority_key(item: Dict[str, Any]) -> Tuple[int, int, int, str]:
+    """Sort iiDB assets according to Launch Curtain's explicit bulk preference."""
+    try:
+        width = int(item.get("width", 0) or 0)
+        height = int(item.get("height", 0) or 0)
+    except Exception:
+        width, height = 0, 0
+    try:
+        exact_rank = IIDB_BULK_RESOLUTION_PRIORITY.index((width, height))
+    except ValueError:
+        exact_rank = len(IIDB_BULK_RESOLUTION_PRIORITY)
+    # For unlisted resolutions, prefer more pixels. At equal size prefer Banner
+    # over Hero to keep the historical category order deterministic.
+    collection_rank = 0 if str(item.get("iidb_collection", "")).lower() == "banners" else 1
+    area = max(0, width) * max(0, height)
+    return (exact_rank, -area, collection_rank, str(item.get("image_url", "")).lower())
+
+
+def _iidb_resolve_game_ids(query: str, kind: str, pages: List[Tuple[str, str]]) -> Dict[int, int]:
+    """Resolve title -> numeric iiDB game ids, following discovered asset cards."""
+    scored_ids: Dict[int, int] = {}
+    discovered_details: List[Tuple[str, int]] = []
+    seen_details = set()
+
+    for page_url, html in pages:
+        direct_candidates = _iidb_game_id_candidates_from_page(html, page_url, query)
+        for game_id, score in direct_candidates:
+            scored_ids[game_id] = max(scored_ids.get(game_id, 0), score)
+
+        # A filtered catalog frequently exposes only an asset-card/detail link.
+        # Follow those links and extract the /games/<id>/ segment from the detail
+        # payload or its assets.iisu.network media URL.
+        try:
+            filtered = bool((parse_qs(urlparse(page_url).query).get("q") or [""])[0])
+        except Exception:
+            filtered = False
+        for start, end, detail_url in _iidb_detail_link_occurrences(html, page_url, kind):
+            key = detail_url.split("#", 1)[0].rstrip("/").lower()
+            if not key or key in seen_details:
+                continue
+            context = _iidb_context_for_url_match(_iidb_decode_page_text(html), start, end)
+            score = _iidb_title_score(query, context)
+            if _iidb_slug(query) and _iidb_slug(query) in _iidb_slug(context):
+                score = max(score, 760)
+            elif filtered:
+                score = max(score, 500)
+            if score < 300:
+                continue
+            seen_details.add(key)
+            discovered_details.append((detail_url, score))
+
+    if discovered_details:
+        jobs = discovered_details[:16]
+        with ThreadPoolExecutor(max_workers=min(6, len(jobs))) as executor:
+            future_map = {executor.submit(_iidb_request_text, url, 7): (url, source_score) for url, source_score in jobs}
+            for future in as_completed(future_map):
+                url, source_score = future_map[future]
+                try:
+                    detail_html = future.result()
+                    _log_info(f"iiDB id-detail response title={query} url={url} bytes={len(detail_html)}")
+                except Exception as error:
+                    _log_info(f"iiDB id-detail miss title={query} url={url}: {error}")
+                    continue
+
+                title_matches = _iidb_detail_page_matches_query(detail_html, url, query)
+                candidates = _iidb_game_id_candidates_from_page(detail_html, url, query)
+                for game_id, score in candidates:
+                    bonus = 180 if title_matches else 60
+                    scored_ids[game_id] = max(scored_ids.get(game_id, 0), score + bonus, source_score + bonus)
+
+                # Last-resort but strong signal: the original media CDN encodes
+                # the game id directly: assets.iisu.network/games/<id>/<family>/...
+                decoded = _iidb_decode_page_text(detail_html)
+                for match in re.finditer(
+                    r'https?://assets\.iisu\.network/games/(\d+)/(?:soundbite|banner|hero)/[^"\'<>\\\s]+',
+                    decoded,
+                    re.IGNORECASE,
+                ):
+                    try:
+                        game_id = int(match.group(1))
+                    except Exception:
+                        continue
+                    if game_id <= 0:
+                        continue
+                    context = _iidb_context_for_url_match(decoded, match.start(), match.end())
+                    local_score = _iidb_title_score(query, context)
+                    if title_matches:
+                        local_score = max(local_score, 900)
+                    else:
+                        local_score = max(local_score, source_score + 80)
+                    scored_ids[game_id] = max(scored_ids.get(game_id, 0), local_score)
+
+    # If raw HTML/RSC still hides the client-side result list, render the same
+    # q= search headlessly and parse the visible result cards. This keeps the
+    # numeric-id lookup automatic for normal users.
+    if not scored_ids:
+        rendered_pages = _iidb_render_search_with_browser(query, kind)
+        for page_url, rendered_html in rendered_pages:
+            for game_id, score in _iidb_game_id_candidates_from_page(rendered_html, page_url, query):
+                scored_ids[game_id] = max(scored_ids.get(game_id, 0), score + 120)
+
+    ranked = sorted(scored_ids.items(), key=lambda item: (-item[1], item[0]))[:12]
+    _log_info(f"iiDB title->id resolved title={query} kind={kind} candidates={ranked}")
+    return dict(ranked)
+
+
+def _iidb_fetch_game_collections(query: str, kind: str, pages: List[Tuple[str, str]], enrich_metadata: bool = True) -> Tuple[List[Dict[str, Any]], List[int]]:
+    explicit_id = _iidb_explicit_game_id(query)
+    scored_ids: Dict[int, int] = {}
+    if explicit_id is not None:
+        scored_ids[explicit_id] = 10000
+        _log_info(f"iiDB explicit game-id search query={query} game_id={explicit_id}")
+    else:
+        scored_ids = _iidb_resolve_game_ids(query, kind, pages)
+
+    # Probe a few high-confidence ids instead of committing blindly to a single
+    # candidate. q= pages can contain platform/edition variants, and only the id
+    # whose concrete collection exposes matching media should win.
+    ranked_ids = sorted(scored_ids.items(), key=lambda item: (-item[1], item[0]))
+    # Never mix collections from several possible titles. A result is useful only
+    # when it belongs to one resolved iiDB game. Automatic title matching requires
+    # a high-confidence score; an explicit numeric query is authoritative.
+    if explicit_id is not None:
+        game_ids = [explicit_id]
+    elif ranked_ids and ranked_ids[0][1] >= 650:
+        game_ids = [ranked_ids[0][0]]
+    else:
+        game_ids = []
+    if not game_ids:
+        _log_info(f"iiDB game-id resolver found no high-confidence id title={query} kind={kind} candidates={ranked_ids[:5]}")
+        return [], []
+
+    jobs: List[Tuple[int, str, str]] = []
+    for game_id in game_ids:
+        for collection in _iidb_collection_names(kind):
+            jobs.append((game_id, collection, _iidb_collection_url(game_id, collection)))
+
+    results: List[Dict[str, Any]] = []
+    seen = set()
+    with ThreadPoolExecutor(max_workers=min(6, len(jobs))) as executor:
+        future_map = {executor.submit(_iidb_request_text, url, 7): (game_id, collection, url) for game_id, collection, url in jobs}
+        for future in as_completed(future_map):
+            game_id, collection, url = future_map[future]
+            try:
+                collection_html = future.result()
+                _log_info(f"iiDB game collection response kind={kind} title={query} game_id={game_id} collection={collection} bytes={len(collection_html)}")
+            except Exception as error:
+                _log_info(f"iiDB game collection miss kind={kind} title={query} game_id={game_id} collection={collection} url={url}: {error}")
+                continue
+            parsed = _iidb_parse_game_collection(collection_html, url, query, kind, collection)
+            _log_info(f"iiDB game collection parsed kind={kind} title={query} game_id={game_id} collection={collection} assets={len(parsed)}")
+            for item in parsed:
+                item["iidb_game_id"] = game_id
+                media_url = str(item.get("audio_url") or item.get("image_url") or "")
+                key = media_url.split("?", 1)[0].lower()
+                if key and key not in seen:
+                    seen.add(key)
+                    results.append(item)
+    order = {"soundbites": 0, "banners": 0, "heroes": 1}
+    id_rank = {game_id: index for index, game_id in enumerate(game_ids)}
+    results.sort(key=lambda item: (
+        id_rank.get(int(item.get("iidb_game_id", 0) or 0), 99),
+        order.get(str(item.get("iidb_collection", "")), 9),
+        str(item.get("audio_url") or item.get("image_url") or "").lower(),
+    ))
+    if enrich_metadata and kind != "soundbite" and results:
+        _iidb_enrich_image_dimensions(results)
+    elif enrich_metadata and kind == "soundbite" and results:
+        _iidb_enrich_audio_durations(results)
+    resolved_with_media: List[int] = []
+    for item in results:
+        try:
+            game_id = int(item.get("iidb_game_id", 0) or 0)
+        except Exception:
+            game_id = 0
+        if game_id and game_id not in resolved_with_media:
+            resolved_with_media.append(game_id)
+    return results, (resolved_with_media or game_ids)
+
+def _search_iidb_assets_sync(title: str, kind: str, enrich_metadata: bool = True) -> Dict[str, Any]:
+    query = str(title or "").strip()
+    if not query or kind not in {"banner", "soundbite"}:
+        return {"ok": False, "results": [], "games": [], "message": "Invalid iiDB search."}
+
+    explicit_id = _iidb_explicit_game_id(query)
+    catalog_urls = [] if explicit_id is not None else _iidb_catalog_request_urls(query, kind)
+    pages: List[Tuple[str, str]] = []
+    errors: List[str] = []
+    if explicit_id is not None:
+        _log_info(f"iiDB search bypassing title resolver kind={kind} query={query} explicit_game_id={explicit_id}")
+    elif catalog_urls:
+        # Fetch both the document shell and the RSC/client-navigation payload.
+        # The latter is where current iiDB builds expose the actual search cards
+        # and their numeric game ids after typing a title in the website search.
+        jobs: List[Tuple[str, str]] = []
+        for url in catalog_urls:
+            jobs.append(("html", url))
+            jobs.append(("rsc", url))
+        with ThreadPoolExecutor(max_workers=min(6, len(jobs))) as executor:
+            future_map = {}
+            for mode, url in jobs:
+                if mode == "rsc":
+                    future_map[executor.submit(_iidb_request_rsc_text, url, 7)] = (mode, url)
+                else:
+                    future_map[executor.submit(_iidb_request_text, url, 7)] = (mode, url)
+            for future in as_completed(future_map):
+                mode, url = future_map[future]
+                try:
+                    html = future.result()
+                    pages.append((url, html))
+                    _log_info(f"iiDB catalog response kind={kind} mode={mode} url={url} bytes={len(html)}")
+                except Exception as error:
+                    errors.append(f"{mode}:{url}: {error}")
+                    _log_info(f"iiDB catalog miss kind={kind} mode={mode} url={url}: {error}")
+
+    # Prefer the real per-game collection contract observed on live iiDB:
+    # /games/<id>/soundbites, /games/<id>/banners and /games/<id>/heroes.
+    collection_results, resolved_game_ids = _iidb_fetch_game_collections(query, kind, pages, enrich_metadata=enrich_metadata)
+    if collection_results:
+        unique_collection: List[Dict[str, Any]] = []
+        collection_seen = set()
+        for item in collection_results:
+            raw = str(item.get("audio_url") or item.get("image_url") or "")
+            try:
+                parsed = urlparse(raw)
+                key = os.path.basename(unquote(parsed.path)).lower() or (parsed.netloc.lower() + parsed.path.lower())
+            except Exception:
+                key = raw.split("?", 1)[0].lower()
+            if key and key not in collection_seen:
+                collection_seen.add(key)
+                unique_collection.append(item)
+        if kind != "soundbite":
+            # Resolve/probe dimensions before this point and apply the exact Launch
+            # Curtain bulk preference before truncating the UI result set. This
+            # ensures a preferred high-resolution original is never discarded just
+            # because it appeared later in the iiDB collection.
+            unique_collection.sort(key=_iidb_bulk_asset_priority_key)
+        unique_collection = unique_collection[:30]
+        _log_info(
+            f"iiDB per-game search kind={kind} title={query} game_ids={resolved_game_ids} "
+            f"assets={len(unique_collection)} collections={_iidb_collection_names(kind)}"
+        )
+        noun = "Soundbite" if kind == "soundbite" else "Asset"
+        return {
+            "ok": True,
+            "results": unique_collection,
+            "games": [{"id": game_id} for game_id in resolved_game_ids],
+            "message": f"Found {len(unique_collection)} iiDB {noun}{'' if len(unique_collection) == 1 else 's'}.",
+            "catalog_url": _iidb_catalog_url(kind),
+        }
+
+    # Do not fall back to generic links from the category page. The live site
+    # contains decorative/support/navigation URLs and the old fallback turned a
+    # Ko-fi link into a fake Soundbite and site artwork into a fake game Asset.
+    # If title -> game id resolution fails, returning zero results is intentional
+    # and safe; users can also enter the numeric iiDB id directly (e.g. 34085).
+    _log_info(
+        f"iiDB search stopped without resolved per-game media kind={kind} title={query} "
+        f"pages={len(pages)} resolved_ids={resolved_game_ids}"
+    )
+    if not pages and explicit_id is None:
+        message = "iiDB catalog could not be reached. Check the Launch Curtain log for the request error."
+    elif explicit_id is not None:
+        message = (
+            "No iiDB Soundbites were found for this game ID."
+            if kind == "soundbite"
+            else "No iiDB Banners or Heroes were found for this game ID."
+        )
+    else:
+        message = (
+            "No iiDB Soundbites found for this title."
+            if kind == "soundbite"
+            else "No iiDB Banners or Heroes found for this title."
+        )
+    return {
+        "ok": False,
+        "results": [],
+        "games": [{"id": game_id} for game_id in resolved_game_ids],
+        "message": message,
+        "catalog_url": _iidb_catalog_url(kind),
+    }
+
+def _download_soundbite_sync(audio_url: str, app_id: int, title: str) -> str:
+    if not _iidb_is_probable_media_url(str(audio_url or ""), "soundbite"):
+        raise RuntimeError("Refusing a non-iiDB game Soundbite URL")
+    parsed = urlparse(str(audio_url or ""))
+    url_ext = os.path.splitext(parsed.path)[1].lower()
+    folder = os.path.join(_soundbites_dir(), str(app_id))
+    os.makedirs(folder, exist_ok=True)
+    digest = hashlib.sha1(str(audio_url).encode("utf-8", "ignore")).hexdigest()[:12]
+    request = Request(
+        audio_url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0 Safari/537.36",
+            "Accept": "audio/*,application/octet-stream;q=0.9,*/*;q=0.5",
+            "Referer": IIDB_BASE_URL + "/",
+        },
+    )
+    with urlopen(request, timeout=20) as response:
+        content_type = str(response.headers.get("Content-Type", "") or "").split(";", 1)[0].strip().lower()
+        if content_type and "text/html" in content_type:
+            raise RuntimeError("iiDB returned an HTML page instead of an audio file")
+        data = response.read(30 * 1024 * 1024 + 1)
+    if not data or len(data) > 30 * 1024 * 1024:
+        raise RuntimeError("Invalid or oversized iiDB soundbite")
+
+    content_type_extensions = {
+        "audio/mpeg": ".mp3",
+        "audio/mp3": ".mp3",
+        "audio/wav": ".wav",
+        "audio/x-wav": ".wav",
+        "audio/ogg": ".ogg",
+        "application/ogg": ".ogg",
+        "audio/mp4": ".m4a",
+        "audio/x-m4a": ".m4a",
+        "audio/aac": ".aac",
+        "audio/flac": ".flac",
+        "audio/x-flac": ".flac",
+        "audio/webm": ".webm",
+    }
+    ext = content_type_extensions.get(content_type) or (url_ext if url_ext in IIDB_AUDIO_EXTENSIONS else ".mp3")
+    destination = os.path.join(folder, f"iidb-{digest}{ext}")
+    with open(destination, "wb") as file:
+        file.write(data)
+    return destination
+
+
+def _soundbite_reference_paths(settings: Dict[str, Any]) -> set[str]:
+    paths: set[str] = set()
+    per_game = settings.get("per_game", {})
+    if isinstance(per_game, dict):
+        for value in per_game.values():
+            if isinstance(value, dict):
+                path = str(value.get("soundbite_path", "") or "").strip()
+                if path:
+                    paths.add(os.path.normcase(os.path.abspath(path)))
+    return paths
+
+
+def _cleanup_unused_soundbites_sync(settings: Dict[str, Any]) -> Dict[str, Any]:
+    """Delete only orphaned files inside Launch Curtain's managed iiDB Soundbite root."""
+    root = _soundbites_dir()
+    used_paths = _soundbite_reference_paths(settings)
+    removed: List[str] = []
+    kept = 0
+    failed: List[str] = []
+    if not os.path.isdir(root):
+        return {"ok": True, "removed": 0, "kept": 0, "failed": [], "message": "Soundbites folder does not exist yet."}
+
+    root_abs = os.path.normcase(os.path.abspath(root))
+    for dirpath, _dirnames, filenames in os.walk(root, topdown=False):
+        for name in filenames:
+            path = os.path.join(dirpath, name)
+            normalized = os.path.normcase(os.path.abspath(path))
+            try:
+                if os.path.commonpath([root_abs, normalized]) != root_abs:
+                    kept += 1
+                    continue
+            except Exception:
+                kept += 1
+                continue
+            if normalized in used_paths:
+                kept += 1
+                continue
+            # Only files explicitly created by the iiDB downloader are eligible.
+            # Even if a user manually places/selects a local file inside this
+            # directory, never delete it unless it carries Launch Curtain's
+            # managed iidb- filename prefix.
+            if not name.lower().startswith("iidb-"):
+                kept += 1
+                continue
+            try:
+                os.remove(path)
+                removed.append(path)
+            except Exception as error:
+                failed.append(f"{path}: {error}")
+        if os.path.normcase(os.path.abspath(dirpath)) != root_abs:
+            try:
+                if not os.listdir(dirpath):
+                    os.rmdir(dirpath)
+            except Exception:
+                pass
+    message = f"Removed {len(removed)} unused managed Soundbite file(s)."
+    if failed:
+        message += f" {len(failed)} file(s) could not be removed."
+    return {"ok": not failed, "removed": len(removed), "kept": kept, "failed": failed, "message": message}
 
 
 def _launch_image_reference_paths(settings: Dict[str, Any]) -> set[str]:
@@ -4068,6 +6524,9 @@ class Plugin:
         self.current_launch_bg_zoom_enabled = True
         self.current_launch_fullscreen_image_path = ""
         self.current_launch_background_opacity = 100
+        self.current_launch_background_position_x = 50
+        self.current_launch_background_position_y = 50
+        self.current_launch_background_scale = 100
         self.current_launch_game_settle_seconds: Optional[float] = None
         self.modern_active = False
         self.native_prompt_visible = False
@@ -4096,6 +6555,17 @@ class Plugin:
         self.launch_candidate_focus_attempted: set[int] = set()
         self.modern_escape_down = False
         self.stale_black_cover_cleanup_done = False
+        self.soundbite_process: Optional[subprocess.Popen[Any]] = None
+        self.current_launch_soundbite_path = ""
+        self.current_launch_soundbite_source = ""
+        self.current_launch_soundbite_title = ""
+        self.current_launch_soundbite_volume = 1.0
+        self.current_launch_soundbite_started_at = 0.0
+        self.current_launch_soundbite_finished_at = 0.0
+        self.current_launch_soundbite_token = ""
+        self.frontend_soundbite_pending = False
+        self.frontend_soundbite_playing = False
+        self.frontend_soundbite_pending_until = 0.0
 
     async def _main(self) -> None:
         self.settings = self._load_settings()
@@ -4153,6 +6623,7 @@ class Plugin:
             stored_settings_version = int(data.get("settings_version", 0) or 0)
             settings = dict(DEFAULT_SETTINGS)
             settings.update(data)
+            settings["steamgriddb_api_key"] = str(settings.get("steamgriddb_api_key", "") or "").strip()[:512]
             if str(settings.get("accent", "")).lower() in {"", "#ffffff", "white"}:
                 settings["accent"] = PLAYHUB_YELLOW
             raw_timeout_enabled = settings.get("timeout_enabled", DEFAULT_SETTINGS["timeout_enabled"])
@@ -4188,8 +6659,21 @@ class Plugin:
                 settings["curtain_mode"] = str(DEFAULT_SETTINGS["curtain_mode"])
             settings["auto_mode"] = settings["curtain_mode"] != "off"
             settings["fullscreen_image_path"] = str(settings.get("fullscreen_image_path", "") or "")
+            bg_x, bg_y, bg_scale = _bounded_background_transform(
+                settings.get("background_position_x", 50),
+                settings.get("background_position_y", 50),
+                settings.get("background_scale", 100),
+            )
+            settings["background_position_x"] = bg_x
+            settings["background_position_y"] = bg_y
+            settings["background_scale"] = bg_scale
             settings["per_game"] = self._normalize_per_game_settings(settings.get("per_game", {}))
             settings["game_cache"] = self._normalize_game_cache(settings.get("game_cache", {}))
+            settings["soundbite_master_volume"] = self._coerce_optional_int(settings.get("soundbite_master_volume", 100), 0, 100)
+            if settings["soundbite_master_volume"] is None:
+                settings["soundbite_master_volume"] = 100
+            raw_excluded = settings.get("soundbite_auto_assign_excluded_app_ids", [])
+            settings["soundbite_auto_assign_excluded_app_ids"] = sorted({app_id for app_id in (_normalize_app_id(value) for value in (raw_excluded if isinstance(raw_excluded, list) else [])) if app_id is not None})
             settings_migrated = self._migrate_launch_image_settings(settings)
             default_timeout = int(DEFAULT_SETTINGS["curtain_timeout"])
             try:
@@ -4313,6 +6797,15 @@ class Plugin:
             background_opacity = self._coerce_optional_int(raw_settings.get("background_opacity"), 0, 100)
             if background_opacity is not None:
                 entry["background_opacity"] = background_opacity
+            if any(key in raw_settings for key in ("background_position_x", "background_position_y", "background_scale")):
+                background_position_x, background_position_y, background_scale = _bounded_background_transform(
+                    raw_settings.get("background_position_x", 50),
+                    raw_settings.get("background_position_y", 50),
+                    raw_settings.get("background_scale", 100),
+                )
+                entry["background_position_x"] = background_position_x
+                entry["background_position_y"] = background_position_y
+                entry["background_scale"] = background_scale
             logo_shadow_opacity = self._coerce_optional_int(raw_settings.get("logo_shadow_opacity"), 0, 100)
             if logo_shadow_opacity is not None:
                 entry["logo_shadow_opacity"] = logo_shadow_opacity
@@ -4324,6 +6817,25 @@ class Plugin:
             background_search_query = str(raw_settings.get("background_search_query", "") or "").strip()
             if background_search_query:
                 entry["background_search_query"] = background_search_query[:180]
+            soundbite_path = str(raw_settings.get("soundbite_path", "") or "").strip()
+            if soundbite_path:
+                entry["soundbite_path"] = os.path.normpath(soundbite_path)
+            soundbite_source = str(raw_settings.get("soundbite_source", "") or "").strip().lower()
+            if soundbite_source in {"iidb", "local"}:
+                entry["soundbite_source"] = soundbite_source
+            soundbite_title = str(raw_settings.get("soundbite_title", "") or "").strip()
+            if soundbite_title:
+                entry["soundbite_title"] = soundbite_title[:180]
+            soundbite_search_query = str(raw_settings.get("soundbite_search_query", "") or "").strip()
+            if soundbite_search_query:
+                entry["soundbite_search_query"] = soundbite_search_query[:180]
+            soundbite_volume = self._coerce_optional_int(raw_settings.get("soundbite_volume"), 0, 100)
+            if soundbite_volume is not None:
+                entry["soundbite_volume"] = soundbite_volume
+            if "iidb_soundbite_managed" in raw_settings:
+                entry["iidb_soundbite_managed"] = self._coerce_bool(raw_settings.get("iidb_soundbite_managed"), False)
+            if "iidb_asset_managed" in raw_settings:
+                entry["iidb_asset_managed"] = self._coerce_bool(raw_settings.get("iidb_asset_managed"), False)
             exit_delay = self._coerce_optional_int(
                 raw_settings.get("exit_delay_seconds", raw_settings.get("game_settle_seconds")),
                 0,
@@ -4392,6 +6904,11 @@ class Plugin:
         logo_position_x = self._coerce_optional_int(raw.get("logo_position_x"), 0, 100)
         logo_position_y = self._coerce_optional_int(raw.get("logo_position_y"), 0, 100)
         logo_scale = self._coerce_optional_int(raw.get("logo_scale"), 50, 200)
+        background_position_x, background_position_y, background_scale = _bounded_background_transform(
+            raw.get("background_position_x", self.settings.get("background_position_x", 50)),
+            raw.get("background_position_y", self.settings.get("background_position_y", 50)),
+            raw.get("background_scale", self.settings.get("background_scale", 100)),
+        )
         return {
             "enabled": self._coerce_bool(raw.get("enabled"), True),
             "show_logo": self._coerce_bool(raw.get("show_logo", self.settings.get("show_logo", True)), True),
@@ -4401,6 +6918,9 @@ class Plugin:
             "logo_scale": 100 if logo_scale is None else logo_scale,
             "fullscreen_image_path": str(raw.get("fullscreen_image_path", self.settings.get("fullscreen_image_path", "")) or ""),
             "background_opacity": self._coerce_optional_int(raw.get("background_opacity", self.settings.get("background_opacity", 100)), 0, 100) or 0,
+            "background_position_x": background_position_x,
+            "background_position_y": background_position_y,
+            "background_scale": background_scale,
             "logo_shadow_opacity": self._coerce_optional_int(raw.get("logo_shadow_opacity", 0), 0, 100) or 0,
             "logo_shadow_blur": self._coerce_optional_int(raw.get("logo_shadow_blur", self.settings.get("logo_shadow_blur", 40)), 0, 100) or 0,
             "force_mode": (lambda fm: fm if fm in ("classic", "modern") else "auto")(str(raw.get("force_mode", "auto") or "auto").strip().lower()),
@@ -4408,6 +6928,13 @@ class Plugin:
             "timeout_seconds": self._coerce_optional_int(raw.get("timeout_seconds", self.settings.get("curtain_timeout", 50)), 5, 60) or int(self.settings.get("curtain_timeout", 50)),
             "bg_zoom_enabled": self._coerce_bool(raw.get("bg_zoom_enabled", self.settings.get("bg_zoom_enabled", False)), False),
             "background_search_query": str(raw.get("background_search_query", "") or ""),
+            "soundbite_path": str(raw.get("soundbite_path", "") or ""),
+            "soundbite_source": str(raw.get("soundbite_source", "") or ""),
+            "soundbite_title": str(raw.get("soundbite_title", "") or ""),
+            "soundbite_search_query": str(raw.get("soundbite_search_query", "") or ""),
+            "soundbite_volume": self._coerce_optional_int(raw.get("soundbite_volume", 100), 0, 100) if self._coerce_optional_int(raw.get("soundbite_volume", 100), 0, 100) is not None else 100,
+            "iidb_soundbite_managed": self._coerce_bool(raw.get("iidb_soundbite_managed"), False),
+            "iidb_asset_managed": self._coerce_bool(raw.get("iidb_asset_managed"), False),
             "exit_delay_seconds": self._coerce_optional_int(
                 raw.get("exit_delay_seconds", raw.get("game_settle_seconds", self.settings.get("game_settle_seconds", DEFAULT_SETTINGS["game_settle_seconds"]))),
                 0,
@@ -4710,6 +7237,207 @@ class Plugin:
         )
         return {"ok": ok, "message": "Black pre-cover hidden."}
 
+    def _soundbite_player_script(self) -> str:
+        return os.path.join(os.path.dirname(__file__), "helpers", "soundbite_player.ps1")
+
+    def _stop_soundbite_player(self, reason: str = "stop") -> None:
+        process = self.soundbite_process
+        if process is not None:
+            try:
+                if process.poll() is None:
+                    _log_info(f"Stopping Soundbite reason={reason} pid={process.pid}")
+                    process.terminate()
+                    try:
+                        process.wait(timeout=0.8)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+            except Exception as error:
+                _log_warning(f"Could not stop Soundbite reason={reason}: {error}")
+        self.soundbite_process = None
+        self.frontend_soundbite_pending = False
+        self.frontend_soundbite_playing = False
+        self.frontend_soundbite_pending_until = 0.0
+
+    def _soundbite_is_playing(self) -> bool:
+        if self.frontend_soundbite_playing:
+            return True
+        if self.frontend_soundbite_pending:
+            if time.time() <= float(self.frontend_soundbite_pending_until or 0.0):
+                return True
+            self.frontend_soundbite_pending = False
+            _log_warning(
+                "Browser Soundbite start timed out; releasing curtain hold "
+                f"app_id={self.current_launch_app_id or 0} token={self.current_launch_soundbite_token}"
+            )
+        # Legacy process state is retained only as a compatibility fallback for any
+        # older in-flight helper. New runtime playback is handled by Steam Chromium.
+        process = self.soundbite_process
+        if process is None:
+            return False
+        try:
+            code = process.poll()
+        except Exception:
+            code = 1
+        if code is None:
+            return True
+        self.soundbite_process = None
+        if self.current_launch_soundbite_finished_at <= 0:
+            self.current_launch_soundbite_finished_at = time.time()
+            _log_info(
+                "Legacy Soundbite playback finished "
+                f"app_id={self.current_launch_app_id or 0} code={code} "
+                f"elapsed={max(0.0, self.current_launch_soundbite_finished_at - self.current_launch_soundbite_started_at):.2f}s"
+            )
+        return False
+
+    def _soundbite_blocks_curtain_close(self) -> bool:
+        return bool(self.current_launch_soundbite_path) and self._soundbite_is_playing()
+
+    def _soundbite_effective_volume(self, game_settings: Dict[str, Any]) -> float:
+        per_game_volume = self._coerce_optional_int(game_settings.get("soundbite_volume", 100), 0, 100)
+        if per_game_volume is None:
+            per_game_volume = 100
+        master_volume = self._coerce_optional_int(self.settings.get("soundbite_master_volume", 100), 0, 100)
+        if master_volume is None:
+            master_volume = 100
+        return (per_game_volume / 100.0) * (master_volume / 100.0)
+
+    def _prepare_soundbite_for_launch(self, app_id: Optional[int], game_settings: Dict[str, Any]) -> None:
+        """Validate and arm the Soundbite, but do not play it before the curtain is visible."""
+        path = os.path.normpath(str(game_settings.get("soundbite_path", "") or "").strip())
+        self._stop_soundbite_player("new launch")
+        self.current_launch_soundbite_path = ""
+        self.current_launch_soundbite_source = ""
+        self.current_launch_soundbite_title = ""
+        self.current_launch_soundbite_volume = 1.0
+        self.current_launch_soundbite_started_at = 0.0
+        self.current_launch_soundbite_finished_at = 0.0
+        self.current_launch_soundbite_token = ""
+        self.frontend_soundbite_pending = False
+        self.frontend_soundbite_playing = False
+        self.frontend_soundbite_pending_until = 0.0
+        if not path or not os.path.isfile(path):
+            if path:
+                _log_warning(f"Configured Soundbite is missing app_id={app_id or 0} path={path}")
+            return
+        extension = os.path.splitext(path)[1].lower()
+        if extension not in IIDB_AUDIO_EXTENSIONS:
+            _log_warning(f"Unsupported Soundbite format app_id={app_id or 0} path={path}")
+            return
+        effective_volume = self._soundbite_effective_volume(game_settings)
+        self.current_launch_soundbite_path = path
+        self.current_launch_soundbite_source = str(game_settings.get("soundbite_source", "") or "")
+        self.current_launch_soundbite_title = str(game_settings.get("soundbite_title", "") or os.path.basename(path))
+        self.current_launch_soundbite_volume = effective_volume
+        self.current_launch_soundbite_token = f"{app_id or 0}:{int(time.time() * 1000)}"
+        self.frontend_soundbite_pending = True
+        self.frontend_soundbite_playing = False
+        self.frontend_soundbite_pending_until = time.time() + 12.0
+        _log_info(
+            "Soundbite armed for Steam Chromium "
+            f"app_id={app_id or 0} mode={self.current_launch_mode or 'unknown'} "
+            f"effective={effective_volume:.3f} path={path} token={self.current_launch_soundbite_token}"
+        )
+
+    def _start_armed_soundbite(self, reason: str = "curtain visible") -> None:
+        path = str(self.current_launch_soundbite_path or "").strip()
+        if not path:
+            return
+        if self._soundbite_is_playing():
+            return
+        # Never replay a Soundbite that already completed during the same launch.
+        if self.current_launch_soundbite_started_at > 0:
+            return
+        if not os.path.isfile(path):
+            _log_warning(f"Armed Soundbite disappeared app_id={self.current_launch_app_id or 0} path={path}")
+            self.current_launch_soundbite_path = ""
+            return
+        script = self._soundbite_player_script()
+        if not _is_windows() or not os.path.isfile(script):
+            _log_warning(f"Soundbite player unavailable platform={sys.platform} script={script}")
+            self.current_launch_soundbite_path = ""
+            return
+
+        effective_volume = max(0.0, min(1.0, float(self.current_launch_soundbite_volume or 0.0)))
+        args = [
+            self._powershell_path(), "-NoLogo", "-NoProfile", "-NonInteractive",
+            "-ExecutionPolicy", "Bypass", "-STA", "-WindowStyle", "Hidden",
+            "-File", script, "-Path", path, "-Volume", f"{effective_volume:.4f}",
+            "-LogPath", _log_path(),
+        ]
+        try:
+            self.soundbite_process = subprocess.Popen(
+                args, cwd=os.path.dirname(__file__), creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            )
+            self.current_launch_soundbite_started_at = time.time()
+            _log_info(
+                "Soundbite playback started "
+                f"app_id={self.current_launch_app_id or 0} pid={self.soundbite_process.pid} "
+                f"effective={effective_volume:.3f} reason={reason}"
+            )
+        except Exception as error:
+            self.soundbite_process = None
+            _log_warning(f"Could not start Soundbite app_id={self.current_launch_app_id or 0}: {error}")
+
+    def _start_soundbite_for_launch(self, app_id: Optional[int], game_settings: Dict[str, Any]) -> None:
+        # Runtime audio is intentionally not started by PowerShell/WPF anymore.
+        # Steam Chromium requests the same data-URL preview used by the settings UI,
+        # then reports started/finished back to this backend.
+        self._prepare_soundbite_for_launch(app_id, game_settings)
+
+    def _soundbite_runtime_payload(self) -> Dict[str, Any]:
+        if not self.current_launch_soundbite_path or not self.current_launch_soundbite_token:
+            return {}
+        return {
+            "soundbite_path": self.current_launch_soundbite_path,
+            "soundbite_title": self.current_launch_soundbite_title,
+            "soundbite_effective_volume": self.current_launch_soundbite_volume,
+            "soundbite_token": self.current_launch_soundbite_token,
+            "soundbite_app_id": self.current_launch_app_id or 0,
+            "soundbite_player": "steam-chromium",
+        }
+
+    def _launch_response(self, message: str) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"ok": True, "message": message}
+        payload.update(self._soundbite_runtime_payload())
+        return payload
+
+    async def soundbite_runtime_started(self, request: Any) -> Dict[str, Any]:
+        payload = request if isinstance(request, dict) else {}
+        token = str(payload.get("token", "") or "")
+        if not token or token != self.current_launch_soundbite_token:
+            return {"ok": False, "stale": True, "message": "Soundbite launch token is stale."}
+        self.frontend_soundbite_pending = False
+        self.frontend_soundbite_playing = True
+        self.frontend_soundbite_pending_until = 0.0
+        self.current_launch_soundbite_started_at = time.time()
+        self.current_launch_soundbite_finished_at = 0.0
+        _log_info(
+            "Soundbite browser playback started "
+            f"app_id={self.current_launch_app_id or 0} token={token} "
+            f"effective={self.current_launch_soundbite_volume:.3f}"
+        )
+        return {"ok": True}
+
+    async def soundbite_runtime_finished(self, request: Any) -> Dict[str, Any]:
+        payload = request if isinstance(request, dict) else {}
+        token = str(payload.get("token", "") or "")
+        if not token or token != self.current_launch_soundbite_token:
+            return {"ok": False, "stale": True, "message": "Soundbite launch token is stale."}
+        status = str(payload.get("status", "finished") or "finished")[:32]
+        reason = str(payload.get("reason", "") or "")[:240]
+        self.frontend_soundbite_pending = False
+        self.frontend_soundbite_playing = False
+        self.frontend_soundbite_pending_until = 0.0
+        self.current_launch_soundbite_finished_at = time.time()
+        elapsed = max(0.0, self.current_launch_soundbite_finished_at - self.current_launch_soundbite_started_at) if self.current_launch_soundbite_started_at > 0 else 0.0
+        _log_info(
+            "Soundbite browser playback finished "
+            f"app_id={self.current_launch_app_id or 0} token={token} status={status} "
+            f"elapsed={elapsed:.2f}s reason={reason}"
+        )
+        return {"ok": True}
+
     def _overlay_script(self) -> str:
         return os.path.join(os.path.dirname(__file__), "helpers", "curtain_overlay.ps1")
 
@@ -4757,6 +7485,81 @@ class Plugin:
         )
         return result
 
+    async def cleanup_unused_soundbites(self) -> Dict[str, Any]:
+        result = await asyncio.to_thread(_cleanup_unused_soundbites_sync, self.settings)
+        _log_info(
+            "Unused managed Soundbite cleanup "
+            f"removed={result.get('removed', 0)} "
+            f"kept={result.get('kept', 0)} "
+            f"failed={len(result.get('failed', []))}"
+        )
+        return result
+
+    async def create_backup(self, request: Any) -> Dict[str, Any]:
+        folder = str(request.get("folder", "") if isinstance(request, dict) else request or "").strip()
+        if not folder:
+            return {"ok": False, "message": "Choose a backup destination folder."}
+        try:
+            # Persist the in-memory state first so the backup is an exact snapshot of
+            # what Launch Curtain is currently using.
+            self._save_settings_to_disk()
+            result = await asyncio.to_thread(_create_backup_sync, self.settings, folder)
+            if result.get("ok"):
+                _log_info(
+                    "Backup created "
+                    f"path={result.get('path', '')} "
+                    f"external_files={result.get('external_files', 0)} "
+                    f"missing_external={result.get('missing_external_files', 0)}"
+                )
+            return result
+        except Exception as error:
+            _log_warning(f"Backup creation failed folder={folder}: {error}")
+            return {"ok": False, "message": f"Could not create backup: {error}"}
+
+    async def restore_backup(self, request: Any) -> Dict[str, Any]:
+        folder = str(request.get("folder", "") if isinstance(request, dict) else request or "").strip()
+        if not folder:
+            return {"ok": False, "message": "Choose a Launch Curtain backup folder."}
+        if self.modern_active or self.overlay_process is not None:
+            return {"ok": False, "message": "Close the active Launch Curtain before restoring a backup."}
+
+        monitor_was_running = self.monitor_task is not None and not self.monitor_task.done()
+        if monitor_was_running and self.monitor_task is not None:
+            self.monitor_task.cancel()
+            try:
+                await self.monitor_task
+            except asyncio.CancelledError:
+                pass
+            self.monitor_task = None
+        self._stop_soundbite_player("backup restore")
+
+        try:
+            result = await asyncio.to_thread(_restore_backup_sync, folder)
+            if not result.get("ok"):
+                if monitor_was_running and self.settings.get("auto_mode"):
+                    self._ensure_monitor()
+                return result
+
+            self.settings = self._load_settings()
+            self._reset_process_tracking()
+            if self.settings.get("auto_mode"):
+                self._ensure_monitor()
+            _log_info(
+                "Backup restored "
+                f"path={folder} "
+                f"backup_plugin_version={result.get('plugin_version', '')}"
+            )
+            result["settings"] = dict(self.settings)
+            return result
+        except Exception as error:
+            _log_warning(f"Backup restore failed folder={folder}: {error}")
+            # _restore_backup_sync rolls the data directory back on failure. Reload it
+            # so memory and disk are guaranteed to agree before resuming monitoring.
+            self.settings = self._load_settings()
+            if self.settings.get("auto_mode"):
+                self._ensure_monitor()
+            return {"ok": False, "message": f"Could not restore backup: {error}"}
+
     async def get_settings(self) -> Dict[str, Any]:
         settings = dict(self.settings)
         settings["default_logo_path"] = self._default_logo_path()
@@ -4766,8 +7569,26 @@ class Plugin:
         for key in DEFAULT_SETTINGS:
             if key in settings:
                 self.settings[key] = settings[key]
+        if "steamgriddb_api_key" in settings:
+            self.settings["steamgriddb_api_key"] = str(settings.get("steamgriddb_api_key", "") or "").strip()[:512]
+        if "soundbite_master_volume" in settings:
+            value = self._coerce_optional_int(settings.get("soundbite_master_volume"), 0, 100)
+            self.settings["soundbite_master_volume"] = 100 if value is None else value
+        if "soundbite_auto_assign_excluded_app_ids" in settings:
+            raw_values = settings.get("soundbite_auto_assign_excluded_app_ids")
+            values = raw_values if isinstance(raw_values, list) else []
+            self.settings["soundbite_auto_assign_excluded_app_ids"] = sorted({app_id for app_id in (_normalize_app_id(item) for item in values) if app_id is not None})
         if "curtain_mode" in settings:
             self.settings["auto_mode"] = str(self.settings.get("curtain_mode", "modern")) != "off"
+        if any(key in settings for key in ("background_position_x", "background_position_y", "background_scale")):
+            bg_x, bg_y, bg_scale = _bounded_background_transform(
+                self.settings.get("background_position_x", 50),
+                self.settings.get("background_position_y", 50),
+                self.settings.get("background_scale", 100),
+            )
+            self.settings["background_position_x"] = bg_x
+            self.settings["background_position_y"] = bg_y
+            self.settings["background_scale"] = bg_scale
 
         self._save_settings_to_disk()
 
@@ -4799,7 +7620,9 @@ class Plugin:
             "resolved": resolved,
             "logo_source": logo_source,
             "default_logo_path": self._default_logo_path(),
-            "global_exit_delay_seconds": int(float(self.settings.get("game_settle_seconds", DEFAULT_SETTINGS["game_settle_seconds"])))
+            "global_exit_delay_seconds": int(float(self.settings.get("game_settle_seconds", DEFAULT_SETTINGS["game_settle_seconds"]))),
+            "soundbite_master_volume": int(self.settings.get("soundbite_master_volume", 100) or 0),
+            "steamgriddb_configured": bool(str(self.settings.get("steamgriddb_api_key", "") or "").strip())
         }
 
     async def validate_launch_image_path(self, request: Any) -> Dict[str, Any]:
@@ -4929,17 +7752,22 @@ class Plugin:
                 self.settings["per_game"] = per_game
             current = dict(per_game.get(str(app_id), {}) if isinstance(per_game.get(str(app_id)), dict) else {})
             existing_path = str(current.get("fullscreen_image_path", "") or "").strip()
-            if existing_path:
-                _log_info(f"PlayStation bulk skipped app_id={app_id} title={title} reason=existing-user-image")
-                return {"ok": False, "skipped": True, "protected": True, "app_id": app_id, "title": title, "message": "Existing launch image preserved."}
+            existing_iidb = bool(current.get("iidb_asset_managed", False))
+            if existing_path or existing_iidb:
+                source = "iidb" if existing_iidb else "local-or-existing"
+                _log_info(f"PlayStation bulk skipped app_id={app_id} title={title} reason=protected-existing-asset source={source}")
+                return {"ok": False, "skipped": True, "protected": True, "app_id": app_id, "title": title, "message": "Existing iiDB/local launch image preserved."}
 
             search = await asyncio.to_thread(_search_playstation_games_sync, title)
-            safe_matches = [item for item in search.get("results", []) if bool(item.get("safe"))]
-            if not safe_matches:
-                _log_info(f"PlayStation bulk skipped app_id={app_id} title={title} reason=no-safe-match")
+            selected = _select_playstation_bulk_match(title, list(search.get("results") or []))
+            if not selected:
+                _log_info(f"PlayStation bulk skipped app_id={app_id} title={title} reason=no-safe-scored-match")
                 return {"ok": False, "skipped": True, "app_id": app_id, "title": title, "message": "No safe PlayStation match."}
 
-            selected = safe_matches[0]
+            _log_info(
+                f"PlayStation bulk selected app_id={app_id} title={title} match={selected.get('title')} "
+                f"classification={selected.get('product_type')} score={selected.get('bulk_match_score')}"
+            )
             backgrounds = await asyncio.to_thread(
                 _get_playstation_backgrounds_sync,
                 str(selected.get("product_url", "")),
@@ -4957,6 +7785,7 @@ class Plugin:
             current.update(PS5_LOGO_PRESET)
             current["fullscreen_image_path"] = path
             current["playstation_asset_managed"] = True
+            current.pop("iidb_asset_managed", None)
             per_game[str(app_id)] = current
             self._save_settings_to_disk()
             _log_info(f"PlayStation bulk applied app_id={app_id} title={title} match={selected.get('title')} path={path}")
@@ -4974,6 +7803,12 @@ class Plugin:
             return {"ok": True, "app_id": app_id, "removed": False, "message": "No PlayStation asset configured."}
         current = dict(per_game.get(str(app_id), {}) if isinstance(per_game.get(str(app_id)), dict) else {})
         path = str(current.get("fullscreen_image_path", "") or "")
+        if bool(current.get("iidb_asset_managed", False)):
+            current.pop("playstation_asset_managed", None)
+            per_game[str(app_id)] = current
+            self._save_settings_to_disk()
+            _log_warning(f"PlayStation removal skipped app_id={app_id} reason=iidb-asset-protected")
+            return {"ok": True, "app_id": app_id, "removed": False, "deleted": False, "protected": True, "message": "iiDB asset preserved."}
         managed = bool(current.pop("playstation_asset_managed", False))
         if not managed:
             return {"ok": True, "app_id": app_id, "removed": False, "deleted": False, "message": "No managed PlayStation asset configured."}
@@ -5001,16 +7836,18 @@ class Plugin:
         title = ""
         resolution = "3840x2160"
         search_query = ""
-        requested_services: List[str] = ["playstation", "igdb", "alphacoders", "nintendo", "xbox"]
+        requested_services: List[str] = ["playstation", "igdb", "alphacoders", "nintendo", "xbox", "iidb", "steamgriddb"]
+        steam_app_id: Optional[int] = None
         if isinstance(request, dict):
             title = str(request.get("title", "") or "").strip()
             search_query = str(request.get("query", request.get("search_query", "")) or "").strip()
             resolution = _normalize_google_resolution(str(request.get("resolution", "") or resolution))
+            steam_app_id = _normalize_app_id(request.get("app_id"))
             raw_services = request.get("services", request.get("sources", requested_services))
             if isinstance(raw_services, list):
                 requested_services = [str(item or "").strip().lower() for item in raw_services]
 
-        valid_services = {"playstation", "igdb", "alphacoders", "nintendo", "xbox"}
+        valid_services = {"playstation", "igdb", "alphacoders", "nintendo", "xbox", "iidb", "steamgriddb"}
         requested_services = [service for service in requested_services if service in valid_services]
         if not title:
             return {"ok": False, "message": "Missing game title.", "results": []}
@@ -5067,12 +7904,19 @@ class Plugin:
                 f"playstation_results={store_count}"
             )
 
-        for service in ("igdb", "alphacoders", "nintendo", "xbox"):
+        for service in ("igdb", "alphacoders", "nintendo", "xbox", "iidb", "steamgriddb"):
             if service not in requested_services:
                 continue
             label = BACKGROUND_SERVICE_CONFIGS[service]["label"]
             try:
-                result = await asyncio.to_thread(_search_background_service_images_sync, title, service, search_query)
+                result = await asyncio.to_thread(
+                    _search_background_service_images_sync,
+                    title,
+                    service,
+                    search_query,
+                    str(self.settings.get("steamgriddb_api_key", "") or "") if service == "steamgriddb" else "",
+                    steam_app_id if service == "steamgriddb" else None,
+                )
                 service_results = result.get("results", [])
                 if not first_google_url:
                     first_google_url = str(result.get("google_url", ""))
@@ -5123,10 +7967,14 @@ class Plugin:
         image_url = str(request.get("image_url", "") or "").strip()
         title = str(request.get("title", "") or "").strip()
         resolution = str(request.get("resolution", "") or "3840x2160").strip()
+        source = str(request.get("source", "") or "").strip()
         if app_id is None:
             return {"ok": False, "message": "Invalid appid."}
         if not image_url:
             return {"ok": False, "message": "Missing image URL."}
+        if source.lower().startswith("iidb") and not _iidb_is_probable_media_url(image_url, "banner"):
+            _log_warning(f"Rejected non-game iiDB image URL app_id={app_id} url={image_url}")
+            return {"ok": False, "message": "Invalid iiDB game Asset URL."}
 
         try:
             path = await asyncio.to_thread(_download_image_sync, image_url, app_id, title or f"App {app_id}", resolution)
@@ -5135,8 +7983,23 @@ class Plugin:
                 per_game = {}
                 self.settings["per_game"] = per_game
             current = dict(per_game.get(str(app_id), {}) if isinstance(per_game.get(str(app_id)), dict) else {})
+            old_path = str(current.get("fullscreen_image_path", "") or "")
+            old_iidb_managed = bool(current.get("iidb_asset_managed", False))
             current["fullscreen_image_path"] = path
+            current.pop("playstation_asset_managed", None)
+            if source.lower().startswith("iidb"):
+                current["iidb_asset_managed"] = True
+            else:
+                current.pop("iidb_asset_managed", None)
             per_game[str(app_id)] = current
+            if old_iidb_managed and old_path and os.path.normcase(os.path.abspath(old_path)) != os.path.normcase(os.path.abspath(path)):
+                try:
+                    image_root = os.path.normcase(os.path.abspath(_launch_images_dir()))
+                    old_abs = os.path.normcase(os.path.abspath(old_path))
+                    if os.path.commonpath([image_root, old_abs]) == image_root and os.path.isfile(old_path):
+                        os.remove(old_path)
+                except Exception as cleanup_error:
+                    _log_warning(f"Could not delete replaced iiDB asset app_id={app_id}: {cleanup_error}")
             self._save_settings_to_disk()
             _log_info(
                 "Google image downloaded "
@@ -5150,6 +8013,324 @@ class Plugin:
         except Exception as error:
             _log_warning(f"Google image download failed app_id={app_id} url={image_url}: {error}")
             return {"ok": False, "message": f"Could not download image: {error}"}
+
+    async def search_iidb_soundbites(self, request: Any) -> Dict[str, Any]:
+        query = str(request.get("query", request.get("title", "")) if isinstance(request, dict) else request or "").strip()
+        if not query:
+            return {"ok": False, "results": [], "message": "Enter a game title."}
+        try:
+            return await asyncio.to_thread(_search_iidb_assets_sync, query, "soundbite")
+        except Exception as error:
+            _log_warning(f"iiDB Soundbite search failed query={query}: {error}")
+            return {"ok": False, "results": [], "message": f"iiDB Soundbite search failed: {error}"}
+
+    async def validate_soundbite_path(self, request: Any) -> Dict[str, Any]:
+        path = str(request.get("path", "") if isinstance(request, dict) else request or "").strip()
+        normalized = os.path.normpath(path) if path else ""
+        extension = os.path.splitext(normalized)[1].lower()
+        ok = bool(normalized and os.path.isfile(normalized) and extension in IIDB_AUDIO_EXTENSIONS)
+        return {
+            "ok": ok, "path": normalized, "extension": extension,
+            "message": "Soundbite file is valid." if ok else "Choose an MP3, WAV, OGG, M4A, AAC, FLAC or WebM audio file."
+        }
+
+    async def get_soundbite_preview(self, request: Any) -> Dict[str, Any]:
+        source = str(request.get("source", "") if isinstance(request, dict) else request or "").strip()
+        if not source:
+            return {"ok": False, "url": "", "message": "No Soundbite selected."}
+        if source.startswith(("http://", "https://")):
+            return {"ok": True, "url": source, "message": "Using remote Soundbite preview."}
+        normalized = os.path.normpath(source)
+        if not os.path.isfile(normalized):
+            return {"ok": False, "url": "", "message": "Soundbite file not found."}
+        if os.path.getsize(normalized) > 24 * 1024 * 1024:
+            return {"ok": False, "url": "", "message": "Soundbite is too large to preview in Steam UI."}
+        extension = os.path.splitext(normalized)[1].lower()
+        if extension not in IIDB_AUDIO_EXTENSIONS:
+            return {"ok": False, "url": "", "message": "Unsupported Soundbite format."}
+        mime = mimetypes.guess_type(normalized)[0] or ({".mp3":"audio/mpeg", ".m4a":"audio/mp4", ".ogg":"audio/ogg", ".wav":"audio/wav", ".webm":"audio/webm", ".aac":"audio/aac", ".flac":"audio/flac"}.get(extension, "audio/mpeg"))
+        try:
+            with open(normalized, "rb") as file:
+                encoded = base64.b64encode(file.read()).decode("ascii")
+            return {"ok": True, "url": f"data:{mime};base64,{encoded}", "message": "Using local Soundbite preview."}
+        except Exception as error:
+            return {"ok": False, "url": "", "message": f"Could not preview Soundbite: {error}"}
+
+    def _delete_managed_soundbite_file(self, path: str, app_id: int) -> bool:
+        try:
+            root = os.path.normcase(os.path.abspath(_soundbites_dir()))
+            target = os.path.normcase(os.path.abspath(path))
+            if os.path.commonpath([root, target]) == root and os.path.isfile(path):
+                os.remove(path)
+                parent = os.path.dirname(path)
+                try:
+                    if parent and os.path.isdir(parent) and not os.listdir(parent):
+                        os.rmdir(parent)
+                except Exception:
+                    pass
+                return True
+        except Exception as error:
+            _log_warning(f"Could not delete managed Soundbite app_id={app_id} path={path}: {error}")
+        return False
+
+    async def import_local_soundbite(self, request: Any) -> Dict[str, Any]:
+        if not isinstance(request, dict):
+            return {"ok": False, "message": "Invalid Soundbite request."}
+        app_id = _normalize_app_id(request.get("app_id"))
+        path = os.path.normpath(str(request.get("path", "") or "").strip())
+        if app_id is None or not path or not os.path.isfile(path) or os.path.splitext(path)[1].lower() not in IIDB_AUDIO_EXTENSIONS:
+            return {"ok": False, "message": "Invalid local Soundbite file."}
+        per_game = self.settings.setdefault("per_game", {})
+        if not isinstance(per_game, dict):
+            per_game = {}
+            self.settings["per_game"] = per_game
+        current = dict(per_game.get(str(app_id), {}) if isinstance(per_game.get(str(app_id)), dict) else {})
+        old_path = str(current.get("soundbite_path", "") or "")
+        old_managed = bool(current.get("iidb_soundbite_managed", False))
+        current["soundbite_path"] = path
+        current["soundbite_source"] = "local"
+        current["soundbite_title"] = os.path.splitext(os.path.basename(path))[0]
+        current["iidb_soundbite_managed"] = False
+        current.setdefault("soundbite_volume", 100)
+        per_game[str(app_id)] = current
+        self._save_settings_to_disk()
+        if old_managed and old_path and old_path != path:
+            self._delete_managed_soundbite_file(old_path, app_id)
+        result = await self.get_game_settings(app_id)
+        result.update({"ok": True, "message": "Local Soundbite imported."})
+        return result
+
+    async def download_iidb_soundbite(self, request: Any) -> Dict[str, Any]:
+        if not isinstance(request, dict):
+            return {"ok": False, "message": "Invalid iiDB Soundbite request."}
+        app_id = _normalize_app_id(request.get("app_id"))
+        audio_url = str(request.get("audio_url", request.get("url", "")) or "").strip()
+        title = str(request.get("title", "") or "").strip()
+        soundbite_title = str(request.get("soundbite_title", request.get("label", "")) or "").strip()
+        if app_id is None or not audio_url:
+            return {"ok": False, "message": "Missing game id or Soundbite URL."}
+        try:
+            path = await asyncio.to_thread(_download_soundbite_sync, audio_url, app_id, title or f"App {app_id}")
+            per_game = self.settings.setdefault("per_game", {})
+            if not isinstance(per_game, dict):
+                per_game = {}
+                self.settings["per_game"] = per_game
+            current = dict(per_game.get(str(app_id), {}) if isinstance(per_game.get(str(app_id)), dict) else {})
+            old_path = str(current.get("soundbite_path", "") or "")
+            old_managed = bool(current.get("iidb_soundbite_managed", False))
+            current["soundbite_path"] = path
+            current["soundbite_source"] = "iidb"
+            current["soundbite_title"] = soundbite_title or str(request.get("game_title", "") or "iiDB Soundbite")
+            current["iidb_soundbite_managed"] = True
+            try:
+                resolved_iidb_id = int(request.get("iidb_game_id", 0) or 0)
+            except Exception:
+                resolved_iidb_id = 0
+            if resolved_iidb_id > 0:
+                current["iidb_game_id"] = resolved_iidb_id
+                current["iidb_game_title"] = title[:180]
+            current.setdefault("soundbite_volume", 100)
+            per_game[str(app_id)] = current
+            self._save_settings_to_disk()
+            if old_managed and old_path and os.path.normcase(os.path.abspath(old_path)) != os.path.normcase(os.path.abspath(path)):
+                self._delete_managed_soundbite_file(old_path, app_id)
+            result = await self.get_game_settings(app_id)
+            result.update({"ok": True, "path": path, "message": "iiDB Soundbite downloaded and applied."})
+            return result
+        except Exception as error:
+            _log_warning(f"iiDB Soundbite download failed app_id={app_id} url={audio_url}: {error}")
+            return {"ok": False, "message": f"Could not download iiDB Soundbite: {error}"}
+
+    async def clear_soundbite(self, request: Any) -> Dict[str, Any]:
+        app_id = _normalize_app_id(request.get("app_id") if isinstance(request, dict) else request)
+        if app_id is None:
+            return {"ok": False, "message": "Invalid appid."}
+        per_game = self.settings.setdefault("per_game", {})
+        current = dict(per_game.get(str(app_id), {}) if isinstance(per_game, dict) and isinstance(per_game.get(str(app_id)), dict) else {})
+        path = str(current.get("soundbite_path", "") or "")
+        managed = bool(current.get("iidb_soundbite_managed", False))
+        for key in ("soundbite_path", "soundbite_source", "soundbite_title", "iidb_soundbite_managed"):
+            current.pop(key, None)
+        if isinstance(per_game, dict):
+            if current:
+                per_game[str(app_id)] = current
+            else:
+                per_game.pop(str(app_id), None)
+        self._save_settings_to_disk()
+        deleted = self._delete_managed_soundbite_file(path, app_id) if managed and path else False
+        return {"ok": True, "removed": bool(path), "deleted": deleted, "local_preserved": bool(path and not managed), "message": "Soundbite assignment removed."}
+
+    async def remove_iidb_soundbite(self, request: Any) -> Dict[str, Any]:
+        app_id = _normalize_app_id(request.get("app_id") if isinstance(request, dict) else request)
+        if app_id is None:
+            return {"ok": False, "message": "Invalid appid."}
+        raw = self._raw_game_settings(app_id)
+        if not bool(raw.get("iidb_soundbite_managed", False)) and str(raw.get("soundbite_source", "")).lower() != "iidb":
+            return {"ok": True, "skipped": True, "removed": False, "local_preserved": bool(raw.get("soundbite_path")), "message": "No managed iiDB Soundbite configured."}
+        return await self.clear_soundbite({"app_id": app_id})
+
+    def _cached_iidb_game_id(self, app_id: int, title: str = "") -> Optional[int]:
+        raw = self._raw_game_settings(app_id)
+        cached_title = str(raw.get("iidb_game_title", "") or "").strip()
+        if cached_title and title and _ps_normalize_title(cached_title) != _ps_normalize_title(title):
+            return None
+        try:
+            value = int(raw.get("iidb_game_id", 0) or 0)
+        except Exception:
+            value = 0
+        return value if value > 0 else None
+
+    @staticmethod
+    def _resolved_iidb_game_id(search: Any) -> Optional[int]:
+        if not isinstance(search, dict):
+            return None
+        games = search.get("games", [])
+        if not isinstance(games, list):
+            return None
+        for game in games:
+            if not isinstance(game, dict):
+                continue
+            try:
+                value = int(game.get("id", 0) or 0)
+            except Exception:
+                value = 0
+            if value > 0:
+                return value
+        return None
+
+    async def _search_iidb_for_game(self, app_id: int, title: str, kind: str, *, enrich_metadata: bool = True) -> Dict[str, Any]:
+        cached_id = self._cached_iidb_game_id(app_id, title)
+        if cached_id:
+            _log_info(f"iiDB cached game-id hit app_id={app_id} title={title} game_id={cached_id} kind={kind}")
+            cached_search = await asyncio.to_thread(_search_iidb_assets_sync, f"iidb:{cached_id}", kind, enrich_metadata)
+            # A known game id remains authoritative even when that specific media
+            # category is empty. Do not pay the title->id/browser cost again.
+            return cached_search
+
+        search = await asyncio.to_thread(_search_iidb_assets_sync, title, kind, enrich_metadata)
+        resolved_id = self._resolved_iidb_game_id(search)
+        if resolved_id:
+            per_game = self.settings.setdefault("per_game", {})
+            if isinstance(per_game, dict):
+                current = dict(per_game.get(str(app_id), {}) if isinstance(per_game.get(str(app_id)), dict) else {})
+                current["iidb_game_id"] = resolved_id
+                current["iidb_game_title"] = title[:180]
+                per_game[str(app_id)] = current
+                # Successful apply/download methods save immediately afterwards.
+                # Persist now only when the category has no media, otherwise we'd
+                # write the settings file twice for every successful bulk item.
+                if not (isinstance(search, dict) and search.get("results")):
+                    self._save_settings_to_disk()
+            _log_info(f"iiDB cached game-id stored app_id={app_id} title={title} game_id={resolved_id} kind={kind}")
+        return search
+
+    async def apply_iidb_soundbite(self, request: Any) -> Dict[str, Any]:
+        if not isinstance(request, dict):
+            return {"ok": False, "message": "Invalid iiDB Soundbite request."}
+        app_id = _normalize_app_id(request.get("app_id"))
+        title = str(request.get("title", "") or "").strip()
+        if app_id is None or not title:
+            return {"ok": False, "message": "Missing game id or title."}
+        raw = self._raw_game_settings(app_id)
+        if str(raw.get("soundbite_path", "") or "").strip():
+            return {"ok": True, "skipped": True, "message": "Existing Soundbite preserved."}
+        excluded = set(self.settings.get("soundbite_auto_assign_excluded_app_ids", []) or [])
+        if app_id in excluded:
+            return {"ok": True, "skipped": True, "excluded": True, "message": "Game is excluded from automatic Soundbite assignment."}
+        try:
+            # Bulk assignment only needs the first valid media URL. Duration probing
+            # is intentionally disabled here; manual search still enriches durations.
+            search = await self._search_iidb_for_game(app_id, title, "soundbite", enrich_metadata=False)
+        except Exception as error:
+            return {"ok": False, "message": f"iiDB Soundbite search failed: {error}"}
+        results = search.get("results", []) if isinstance(search, dict) else []
+        if not results:
+            return {"ok": False, "skipped": True, "message": "No iiDB Soundbite found."}
+        selected = results[0]
+        resolved_iidb_id = self._resolved_iidb_game_id(search)
+        return await self.download_iidb_soundbite({
+            "app_id": app_id, "title": title, "audio_url": selected.get("audio_url", ""),
+            "soundbite_title": selected.get("title", selected.get("source", "iiDB Soundbite")),
+            "game_title": selected.get("game_title", title),
+            "iidb_game_id": resolved_iidb_id or selected.get("iidb_game_id", 0),
+        })
+
+    async def apply_iidb_asset(self, request: Any) -> Dict[str, Any]:
+        if not isinstance(request, dict):
+            return {"ok": False, "message": "Invalid iiDB Asset request."}
+        app_id = _normalize_app_id(request.get("app_id"))
+        title = str(request.get("title", "") or "").strip()
+        if app_id is None or not title:
+            return {"ok": False, "message": "Missing game id or title."}
+        per_game = self.settings.setdefault("per_game", {})
+        if not isinstance(per_game, dict):
+            per_game = {}
+            self.settings["per_game"] = per_game
+        current = dict(per_game.get(str(app_id), {}) if isinstance(per_game.get(str(app_id)), dict) else {})
+        if str(current.get("fullscreen_image_path", "") or "").strip():
+            return {"ok": True, "skipped": True, "protected": True, "message": "Existing launch image preserved."}
+        try:
+            search = await self._search_iidb_for_game(app_id, title, "banner", enrich_metadata=True)
+            results = search.get("results", []) if isinstance(search, dict) else []
+            if not results:
+                return {"ok": False, "skipped": True, "message": "No iiDB Asset found."}
+            results = sorted(results, key=_iidb_bulk_asset_priority_key)
+            selected = results[0]
+            _log_info(
+                f"iiDB bulk asset selected app_id={app_id} title={title} "
+                f"resolution={selected.get('width', 0)}x{selected.get('height', 0)} "
+                f"collection={selected.get('iidb_collection', '')} url={selected.get('image_url', '')}"
+            )
+            path = await asyncio.to_thread(_download_image_sync, str(selected.get("image_url", "")), app_id, title, str(selected.get("resolution", "iiDB Asset")))
+            current["fullscreen_image_path"] = path
+            current["iidb_asset_managed"] = True
+            resolved_iidb_id = self._resolved_iidb_game_id(search)
+            if resolved_iidb_id:
+                current["iidb_game_id"] = resolved_iidb_id
+                current["iidb_game_title"] = title[:180]
+            current.pop("playstation_asset_managed", None)
+            per_game[str(app_id)] = current
+            self._save_settings_to_disk()
+            return {"ok": True, "path": path, "message": "iiDB Asset downloaded and applied."}
+        except Exception as error:
+            return {"ok": False, "message": f"Could not apply iiDB Asset: {error}"}
+
+    async def remove_iidb_asset(self, request: Any) -> Dict[str, Any]:
+        app_id = _normalize_app_id(request.get("app_id") if isinstance(request, dict) else request)
+        if app_id is None:
+            return {"ok": False, "message": "Invalid appid."}
+        per_game = self.settings.setdefault("per_game", {})
+        current = dict(per_game.get(str(app_id), {}) if isinstance(per_game, dict) and isinstance(per_game.get(str(app_id)), dict) else {})
+        if not bool(current.get("iidb_asset_managed", False)):
+            return {"ok": True, "skipped": True, "removed": False, "message": "No managed iiDB Asset configured."}
+        # Never remove a PlayStation-managed asset even if stale settings contain both markers.
+        if bool(current.get("playstation_asset_managed", False)):
+            current.pop("iidb_asset_managed", None)
+            if isinstance(per_game, dict):
+                per_game[str(app_id)] = current
+            self._save_settings_to_disk()
+            return {"ok": True, "skipped": True, "protected": True, "removed": False, "message": "PlayStation Asset preserved."}
+        path = str(current.get("fullscreen_image_path", "") or "")
+        current.pop("fullscreen_image_path", None)
+        current.pop("iidb_asset_managed", None)
+        if isinstance(per_game, dict):
+            if current:
+                per_game[str(app_id)] = current
+            else:
+                per_game.pop(str(app_id), None)
+        self._save_settings_to_disk()
+        deleted = False
+        if path:
+            try:
+                root = os.path.normcase(os.path.abspath(_launch_images_dir()))
+                target = os.path.normcase(os.path.abspath(path))
+                if os.path.commonpath([root, target]) == root and os.path.isfile(path):
+                    os.remove(path)
+                    deleted = True
+            except Exception as error:
+                _log_warning(f"Could not delete iiDB Asset app_id={app_id}: {error}")
+        return {"ok": True, "removed": bool(path), "deleted": deleted, "message": "iiDB Asset removed."}
+
 
     async def save_game_settings(self, request: Dict[str, Any]) -> Dict[str, Any]:
         app_id = _normalize_app_id(request.get("app_id") if isinstance(request, dict) else None)
@@ -5182,14 +8363,29 @@ class Plugin:
                 else:
                     current[key] = number
 
+        if any(key in values for key in ("background_position_x", "background_position_y", "background_scale")):
+            bg_x, bg_y, bg_scale = _bounded_background_transform(
+                values.get("background_position_x", current.get("background_position_x", 50)),
+                values.get("background_position_y", current.get("background_position_y", 50)),
+                values.get("background_scale", current.get("background_scale", 100)),
+            )
+            current["background_position_x"] = bg_x
+            current["background_position_y"] = bg_y
+            current["background_scale"] = bg_scale
+
         if "fullscreen_image_path" in values:
             image_path = str(values.get("fullscreen_image_path", "") or "").strip()
             if image_path:
                 normalized_image_path = os.path.normpath(image_path)
                 if os.path.isfile(normalized_image_path):
                     current["fullscreen_image_path"] = normalized_image_path
+                    # A manually selected local image is user-owned from this point on.
+                    current.pop("playstation_asset_managed", None)
+                    current.pop("iidb_asset_managed", None)
             else:
                 current.pop("fullscreen_image_path", None)
+                current.pop("playstation_asset_managed", None)
+                current.pop("iidb_asset_managed", None)
 
         if "background_opacity" in values:
             background_opacity = self._coerce_optional_int(values.get("background_opacity"), 0, 100)
@@ -5232,6 +8428,38 @@ class Plugin:
                 current["background_search_query"] = background_search_query[:180]
             else:
                 current.pop("background_search_query", None)
+
+        if "soundbite_path" in values:
+            soundbite_path = str(values.get("soundbite_path", "") or "").strip()
+            if soundbite_path and os.path.isfile(os.path.normpath(soundbite_path)):
+                current["soundbite_path"] = os.path.normpath(soundbite_path)
+            elif not soundbite_path:
+                current.pop("soundbite_path", None)
+                current.pop("soundbite_source", None)
+                current.pop("soundbite_title", None)
+                current.pop("iidb_soundbite_managed", None)
+        if "soundbite_source" in values:
+            source = str(values.get("soundbite_source", "") or "").strip().lower()
+            if source in {"iidb", "local"}:
+                current["soundbite_source"] = source
+        if "soundbite_title" in values:
+            title_value = str(values.get("soundbite_title", "") or "").strip()
+            if title_value:
+                current["soundbite_title"] = title_value[:180]
+            else:
+                current.pop("soundbite_title", None)
+        if "soundbite_search_query" in values:
+            query_value = str(values.get("soundbite_search_query", "") or "").strip()
+            if query_value:
+                current["soundbite_search_query"] = query_value[:180]
+            else:
+                current.pop("soundbite_search_query", None)
+        if "soundbite_volume" in values:
+            soundbite_volume = self._coerce_optional_int(values.get("soundbite_volume"), 0, 100)
+            if soundbite_volume is None:
+                current.pop("soundbite_volume", None)
+            else:
+                current["soundbite_volume"] = soundbite_volume
 
         if "exit_delay_seconds" in values or "game_settle_seconds" in values:
             exit_delay = self._coerce_optional_int(values.get("exit_delay_seconds", values.get("game_settle_seconds")), 0, 10)
@@ -5319,6 +8547,13 @@ class Plugin:
             "auto_mode": bool(self.settings.get("auto_mode")),
             "curtain_mode": str(self.settings.get("curtain_mode", "modern")),
             "modern_curtain_show": bool(self.modern_active),
+            "modern_curtain_fade_to_black": bool(self.modern_active and self.modern_release_after > 0),
+            "soundbite_playing": self._soundbite_is_playing(),
+            "soundbite_path": self.current_launch_soundbite_path,
+            "soundbite_title": self.current_launch_soundbite_title,
+            "soundbite_effective_volume": self.current_launch_soundbite_volume,
+            "soundbite_token": self.current_launch_soundbite_token,
+            "soundbite_player": "steam-chromium" if self.current_launch_soundbite_path else "",
             "native_prompt_visible": bool(self.native_prompt_visible),
             "game_running": _game_running,
             "foreground": foreground,
@@ -5392,6 +8627,10 @@ class Plugin:
         _eff_to_sec = getattr(self, "current_launch_timeout_seconds", None) or int(self.settings.get("curtain_timeout", DEFAULT_SETTINGS["curtain_timeout"]))
         timeout_value = timeout_override if timeout_override is not None else (_eff_to_sec if _eff_to_en else 0)
         timeout = int(timeout_value)
+        # The PowerShell overlay must not self-close while a Soundbite is playing;
+        # the Python monitor owns the timeout in that case and releases only after audio ends.
+        if self.current_launch_soundbite_path:
+            timeout = 0
         self._write_launch_status("")
         args = [
             self._powershell_path(),
@@ -5427,6 +8666,12 @@ class Plugin:
             self.current_launch_fullscreen_image_path if _wpf_supported_image_path(self.current_launch_fullscreen_image_path) else "",
             "-BackdropOpacity",
             str(max(0, min(100, int(self.current_launch_background_opacity)))),
+            "-BackdropPositionX",
+            str(max(0, min(100, int(self.current_launch_background_position_x)))),
+            "-BackdropPositionY",
+            str(max(0, min(100, int(self.current_launch_background_position_y)))),
+            "-BackdropScale",
+            str(max(100, min(200, int(self.current_launch_background_scale)))),
             "-LogoShadowOpacity",
             str(max(0, min(100, int(getattr(self, "current_launch_logo_shadow_opacity", 0))))),
             "-LogoShadowBlur",
@@ -5510,6 +8755,19 @@ class Plugin:
             _log_warning(f"launch_requested ignored: no appid reason={reason}")
             return {"ok": False, "message": "Launch ignored: no Steam game appid was provided."}
 
+        # Steam can emit more than one launch signal for the same Play press. In
+        # Modern mode there is no external overlay process to make the older
+        # duplicate guard fire, so explicitly protect the current Soundbite too.
+        if (
+            app_id
+            and self.current_launch_app_id == app_id
+            and self.launch_request_started_at > 0
+            and time.time() - self.launch_request_started_at < 1.5
+            and (self.modern_active or self._is_curtain_running() or bool(self.current_launch_soundbite_path) or self._soundbite_is_playing())
+        ):
+            _log_info(f"launch_requested ignored: duplicate launch signal app_id={app_id}")
+            return self._launch_response("Curtain already active for this launch.")
+
         game_settings = self._resolved_game_settings(app_id) if app_id else self._resolved_game_settings(None)
         if app_id and not game_settings.get("enabled", True):
             await self.hide_black_cover()
@@ -5519,6 +8777,16 @@ class Plugin:
         if self.settings.get("auto_mode"):
             self._ensure_monitor()
 
+        if (self.modern_active or self._soundbite_is_playing()) and not self._is_curtain_running():
+            _log_info(
+                "launch_requested replacing active modern/Soundbite launch "
+                f"previous_app_id={self.current_launch_app_id or 0} next_app_id={app_id or 0}"
+            )
+            self.modern_active = False
+            self._restore_modern_launcher_windows("new launch request")
+            self._stop_soundbite_player("new launch request")
+            self._reset_launch_state()
+
         if self._is_curtain_running():
             overlay_age = max(0.0, time.time() - self.last_curtain_started_at)
             same_app = bool(app_id and self.current_launch_app_id == app_id)
@@ -5527,7 +8795,7 @@ class Plugin:
                     "launch_requested ignored: duplicate request while curtain just started "
                     f"app_id={app_id} overlay_age={overlay_age:.2f}"
                 )
-                return {"ok": True, "message": "Curtain already visible for this launch."}
+                return self._launch_response("Curtain already visible for this launch.")
             _log_info(
                 "launch_requested replacing existing curtain overlay "
                 f"previous_app_id={self.current_launch_app_id or 0} "
@@ -5585,6 +8853,9 @@ class Plugin:
             self.current_launch_fullscreen_image_path = ""
         background_opacity = self._coerce_optional_int(game_settings.get("background_opacity", 100), 0, 100)
         self.current_launch_background_opacity = 100 if background_opacity is None else background_opacity
+        self.current_launch_background_position_x = int(game_settings.get("background_position_x", 50))
+        self.current_launch_background_position_y = int(game_settings.get("background_position_y", 50))
+        self.current_launch_background_scale = int(game_settings.get("background_scale", 100))
         self.current_launch_logo_shadow_opacity = self._coerce_optional_int(game_settings.get("logo_shadow_opacity", 0), 0, 100) or 0
         self.current_launch_logo_shadow_blur = self._coerce_optional_int(game_settings.get("logo_shadow_blur", 40), 0, 100) or 0
         self.current_launch_bg_zoom_enabled = self._coerce_bool(game_settings.get("bg_zoom_enabled", False), False)
@@ -5592,6 +8863,7 @@ class Plugin:
             "exit_delay_seconds",
             self.settings.get("game_settle_seconds", DEFAULT_SETTINGS["game_settle_seconds"])
         )
+        self._start_soundbite_for_launch(app_id, game_settings)
         request_logo_path = _local_path_from_logo_source(logo_source)
         if request_logo_path and not _source_looks_like_logo_artwork(request_logo_path, app_id):
             _log_info(f"Ignoring non-logo local artwork from launch request: {request_logo_path}")
@@ -5629,6 +8901,10 @@ class Plugin:
             f"logo_shadow={self.current_launch_logo_shadow_opacity} "
             f"backdrop={bool(self.current_launch_fullscreen_image_path)} "
             f"background_opacity={self.current_launch_background_opacity} "
+            f"background_position={self.current_launch_background_position_x},{self.current_launch_background_position_y} "
+            f"background_scale={self.current_launch_background_scale} "
+            f"soundbite={bool(self.current_launch_soundbite_path)} "
+            f"soundbite_volume={self.current_launch_soundbite_volume:.3f} "
             f"exit_delay={self.current_launch_game_settle_seconds}"
         )
 
@@ -5662,7 +8938,7 @@ class Plugin:
             immediate_result = await self.show_curtain(timeout_override=0)
             if bool(immediate_result.get("ok")):
                 _log_info(f"launch armed with classic curtain already visible app_id={app_id or 0} reason={reason}")
-                return {"ok": True, "message": f"Launch Curtain visible for launch: {reason}."}
+                return self._launch_response(f"Launch Curtain visible for launch: {reason}.")
             _log_warning("Immediate classic curtain start failed; falling back to process-triggered start")
 
         # Wait for a real Steam/launcher child process before creating the WPF
@@ -5670,7 +8946,7 @@ class Plugin:
         # legacy DirectX titles from receiving the foreground activation they
         # need while their first render device is being created.
         _log_info(f"launch armed, waiting for first launch process app_id={app_id or 0} reason={reason}")
-        return {"ok": True, "message": f"Launch Curtain armed for launch: {reason}."}
+        return self._launch_response(f"Launch Curtain armed for launch: {reason}.")
 
     async def _stop_overlay_process(self, reason: str = "hide_curtain") -> None:
         if self._is_curtain_running() and self.overlay_process is not None:
@@ -5711,6 +8987,9 @@ class Plugin:
         self.current_launch_bg_zoom_enabled = True
         self.current_launch_fullscreen_image_path = ""
         self.current_launch_background_opacity = 100
+        self.current_launch_background_position_x = 50
+        self.current_launch_background_position_y = 50
+        self.current_launch_background_scale = 100
         self.current_launch_game_settle_seconds = None
         self.current_launch_mode = None
         self.current_launch_timeout_enabled = None
@@ -5724,6 +9003,16 @@ class Plugin:
         self.modern_handoff_hwnd = 0
         self.modern_handoff_pid = 0
         self.native_prompt_visible = False
+        self.current_launch_soundbite_path = ""
+        self.current_launch_soundbite_source = ""
+        self.current_launch_soundbite_title = ""
+        self.current_launch_soundbite_volume = 1.0
+        self.current_launch_soundbite_started_at = 0.0
+        self.current_launch_soundbite_finished_at = 0.0
+        self.current_launch_soundbite_token = ""
+        self.frontend_soundbite_pending = False
+        self.frontend_soundbite_playing = False
+        self.frontend_soundbite_pending_until = 0.0
 
     async def set_native_prompt_visible(self, request: Any = None) -> Dict[str, Any]:
         visible = bool(request.get("visible")) if isinstance(request, dict) else bool(request)
@@ -5757,6 +9046,7 @@ class Plugin:
             )
         await self.hide_black_cover()
         await self._stop_overlay_process("hide_curtain")
+        self._stop_soundbite_player("curtain hidden")
         self._reset_launch_state()
         return {"ok": True, "message": "Curtain hidden."}
 
@@ -5981,6 +9271,10 @@ class Plugin:
             )
 
             if visible_long_enough and (fullscreen_long_enough or visible_window_ready):
+                if self._soundbite_blocks_curtain_close():
+                    # Keep the already-ready game tracked. As soon as the jingle ends this
+                    # same candidate closes the curtain on the next monitor tick.
+                    continue
                 reason = "process candidate reached fullscreen" if fullscreen_long_enough else "process candidate opened a visible game window"
                 _log_info(
                     f"Hiding curtain: {reason} "
@@ -6006,6 +9300,8 @@ class Plugin:
             return
 
         if time.time() >= self.launch_pending_until:
+            if self._soundbite_blocks_curtain_close():
+                return
             _log_info("Hiding curtain: timeout reached")
             self.launch_pending_until = 0.0
             self.game_seen_since = 0.0
@@ -6599,28 +9895,33 @@ class Plugin:
                         self.modern_active
                         and self.modern_started_at > 0
                         and now - self.modern_started_at >= MODERN_FAIL_OPEN_SECONDS
+                        and not self._soundbite_blocks_curtain_close()
                     ):
                         _log_warning("Modern curtain fail-open watchdog expired; releasing Steam UI")
                         await self.hide_curtain()
                         continue
 
-                    # While a hand-off is pending, keep the React curtain fully visible.
-                    # Release Steam only for a verified focus attempt; the frontend is told
-                    # to hide the curtain only after the game is already foreground, so the
-                    # native Steam spinner can never be exposed between curtain and game.
+                    # A Modern hand-off now has an explicit 0.5 s artwork -> black phase
+                    # while Steam is STILL pinned above the game. Only after that fade is
+                    # complete do we release Steam topmost and focus the verified game.
+                    # This makes the fade visible instead of burying the Steam DOM curtain
+                    # behind the game before its CSS transition can be seen.
                     if self.modern_active and self.modern_release_after > 0:
                         if fullscreen_game_window:
                             self.modern_handoff_hwnd = int(fullscreen_game_window.get("hwnd", 0) or self.modern_handoff_hwnd or 0)
                             self.modern_handoff_pid = int(fullscreen_game_window.get("pid", 0) or self.modern_handoff_pid or 0)
                         target_hwnd = int(self.modern_handoff_hwnd or 0)
                         target_pid = int(self.modern_handoff_pid or 0)
-                        if target_hwnd > 0 and now - self.last_modern_cover_refocus_at >= 0.12:
+                        if now < self.modern_release_after:
+                            if not self.native_prompt_visible:
+                                self._protect_modern_curtain(foreground, launcher_names, processes)
+                        elif target_hwnd > 0 and now - self.last_modern_cover_refocus_at >= 0.12:
                             self.last_modern_cover_refocus_at = now
-                            self._release_modern_steam_topmost("modern verified game-focus attempt")
+                            self._release_modern_steam_topmost("modern fade-to-black complete; verified game-focus attempt")
                             focused_game = _focus_game_window_for_handoff(target_hwnd, target_pid)
                             if focused_game:
                                 _log_info(
-                                    "Modern game hand-off complete before curtain hide "
+                                    "Modern game hand-off complete after 0.5s fade-to-black "
                                     f"pid={target_pid} hwnd={target_hwnd} focused=True"
                                 )
                                 self.modern_active = False
@@ -6628,19 +9929,24 @@ class Plugin:
                                 self.game_seen_since = 0.0
                                 self.launch_game_candidates = {}
                                 self.launch_game_fullscreen_since = {}
-                                self._restore_modern_launcher_windows("modern game focused")
+                                self._restore_modern_launcher_windows("modern game focused after fade")
                             else:
-                                # Put Steam back in front immediately and retry. Extending the
-                                # deadline is deliberate: a failed focus must not reveal Steam.
+                                # Put Steam back in front immediately and retry while the
+                                # frontend remains fully black; do not replay the artwork fade.
                                 steam_hwnd = self._pin_steam_for_modern_curtain()
                                 if steam_hwnd > 0:
                                     _focus_window(steam_hwnd)
-                                if now >= self.modern_release_after:
-                                    self.modern_release_after = now + 2.0
-                                    _log_warning(
-                                        "Modern game focus not yet accepted; keeping curtain visible "
-                                        f"pid={target_pid} hwnd={target_hwnd}"
-                                    )
+                                self.modern_release_after = now + 0.15
+                                _log_warning(
+                                    "Modern game focus not yet accepted after fade; keeping black curtain visible "
+                                    f"pid={target_pid} hwnd={target_hwnd}"
+                                )
+                        elif target_hwnd <= 0:
+                            _log_info("Modern fade-to-black complete without a game target; closing curtain")
+                            self.modern_active = False
+                            self.launch_pending_until = 0.0
+                            self.game_seen_since = 0.0
+                            self._restore_modern_launcher_windows("modern no-target close after fade")
                     elif self.modern_active and not self.native_prompt_visible:
                         self._protect_modern_curtain(foreground, launcher_names, processes)
                     elif self.modern_active and self.native_prompt_visible and self.modern_steam_topmost_hwnd:
@@ -6658,24 +9964,23 @@ class Plugin:
                         if self.game_seen_since <= 0:
                             self.game_seen_since = now
                         surface_ready = now - self.game_seen_since >= handoff_settle
-                        if surface_ready and (now - self.modern_started_at >= min_visible):
+                        if surface_ready and (now - self.modern_started_at >= min_visible) and not self._soundbite_blocks_curtain_close():
                             self.modern_handoff_hwnd = game_hwnd
                             self.modern_handoff_pid = game_pid
-                            self.modern_release_after = now + 2.0
+                            self.modern_release_after = now + MODERN_FADE_TO_BLACK_SECONDS
                             ready_kind = str(fullscreen_game_window.get("ready_kind", "fullscreen"))
                             _log_info(
                                 "Modern curtain hand-off armed: tracked game surface settled; "
-                                "curtain remains visible until game focus is verified"
+                                "starting 0.5s fade-to-black before verified game focus"
                                 f" kind={ready_kind} pid={game_pid} hwnd={game_hwnd} "
                                 f"process={game_process} settle_seconds={handoff_settle} "
                                 f"readiness={ready_kind}"
                             )
-                    elif self.modern_active and self.modern_release_after <= 0 and bool(getattr(self, "current_launch_timeout_enabled", self.settings.get("timeout_enabled", DEFAULT_SETTINGS["timeout_enabled"]))) and self.launch_pending_until > 0 and now >= self.launch_pending_until:
-                        _log_info("Modern curtain hand-off: timeout; closing without a game target")
-                        self.modern_active = False
-                        self.launch_pending_until = 0.0
-                        self.game_seen_since = 0.0
-                        self._restore_modern_launcher_windows("modern timeout")
+                    elif self.modern_active and self.modern_release_after <= 0 and bool(getattr(self, "current_launch_timeout_enabled", self.settings.get("timeout_enabled", DEFAULT_SETTINGS["timeout_enabled"]))) and self.launch_pending_until > 0 and now >= self.launch_pending_until and not self._soundbite_blocks_curtain_close():
+                        _log_info("Modern curtain hand-off: timeout; starting 0.5s fade-to-black without a game target")
+                        self.modern_handoff_hwnd = 0
+                        self.modern_handoff_pid = 0
+                        self.modern_release_after = now + MODERN_FADE_TO_BLACK_SECONDS
                     elif self.modern_active and self.modern_release_after <= 0 and not fullscreen_game_window:
                         self.game_seen_since = 0.0
                 elif self._is_curtain_running() and is_fullscreen_game:
@@ -6687,7 +9992,7 @@ class Plugin:
 
                     game_is_settled = time.time() - self.game_seen_since >= game_settle
                     curtain_was_visible = time.time() - self.last_curtain_started_at >= min_visible
-                    if game_is_settled and curtain_was_visible:
+                    if game_is_settled and curtain_was_visible and not self._soundbite_blocks_curtain_close():
                         _log_info(
                             "Hiding curtain: foreground fullscreen game settled "
                             f"process={process} "
