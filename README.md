@@ -50,7 +50,7 @@ settings are shared by Modern and Classic mode.
 
 ## Install
 
-Install `Launch-Curtain_Installer-2.5.0.zip` through Decky Loader, or copy the
+Install `Launch-Curtain_Installer-2.5.1.zip` through Decky Loader, or copy the
 contained `launch-curtain` folder into the Decky plugins directory.
 
 Steam caches Decky frontends. After replacing or reinstalling the plugin, exit Steam

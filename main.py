@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import ctypes
+import difflib
 import html as html_lib
 import hashlib
 import json
@@ -321,9 +322,9 @@ def _backup_version() -> str:
     try:
         version_path = os.path.join(os.path.dirname(__file__), "VERSION.txt")
         with open(version_path, "r", encoding="utf-8") as file:
-            return str(file.read() or "").strip() or "2.5.0"
+            return str(file.read() or "").strip() or "2.5.1"
     except Exception:
-        return "2.5.0"
+        return "2.5.1"
 
 
 def _unique_backup_dir(parent: str) -> str:
@@ -3352,7 +3353,7 @@ def _steamgriddb_api_json(path: str, api_key: str, timeout: int = 12) -> Any:
     request = Request(
         url,
         headers={
-            "User-Agent": "Launch-Curtain/2.5.0 SteamGridDB-Hero integration",
+            "User-Agent": "Launch-Curtain/2.5.1 SteamGridDB-Hero integration",
             "Accept": "application/json",
             "Authorization": f"Bearer {key}",
         },
@@ -3622,8 +3623,173 @@ def _download_image_sync(image_url: str, app_id: int, title: str, resolution: st
 
 
 IIDB_BASE_URL = "https://iidb.iisu.network"
+IIDB_API_BASE_URLS = (
+    "https://iidb-api.iisu.network/api/v1",
+    "https://iidb.iisu.network/api/v1",
+)
 IIDB_AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac", ".webm"}
 IIDB_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".avif"}
+
+
+def _iidb_request_json(path: str, params: Dict[str, Any], timeout: int = 8) -> Dict[str, Any]:
+    errors: List[str] = []
+    query = urlencode({key: value for key, value in params.items() if value is not None})
+    for base_url in IIDB_API_BASE_URLS:
+        url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+        if query:
+            url += "?" + query
+        try:
+            request = Request(url, headers={
+                "User-Agent": "Launch-Curtain/2.5.1 iiDB integration",
+                "Accept": "application/json",
+                "Referer": IIDB_BASE_URL + "/",
+            })
+            with urlopen(request, timeout=timeout) as response:
+                payload = json.loads(response.read(8 * 1024 * 1024).decode("utf-8"))
+            if isinstance(payload, dict):
+                return payload
+            raise RuntimeError("iiDB API returned an unexpected response")
+        except Exception as error:
+            errors.append(f"{url}: {error}")
+    raise RuntimeError("; ".join(errors) or "iiDB API request failed")
+
+
+def _iidb_api_asset_result(asset: Dict[str, Any], parent: Dict[str, Any], kind: str) -> Optional[Dict[str, Any]]:
+    filename = str(asset.get("filename") or "").strip().lstrip("/")
+    media_url = str(asset.get("raw_url") or "").strip()
+    if not media_url and filename:
+        media_url = "https://assets.iisu.network/" + filename
+    if not _iidb_is_probable_media_url(media_url, kind):
+        return None
+
+    try:
+        parent_id = int(parent.get("id") or asset.get("parent_id") or 0)
+    except Exception:
+        parent_id = 0
+    parent_name = str(parent.get("name") or asset.get("parent_name") or "").strip()
+    collection = str(asset.get("type") or ("soundbite" if kind == "soundbite" else "banner")).lower()
+    result: Dict[str, Any] = {
+        "id": f"iidb-{collection}-{asset.get('id') or hashlib.sha1(media_url.encode('utf-8', 'ignore')).hexdigest()[:12]}",
+        "game_title": parent_name,
+        "iidb_game_id": parent_id,
+        "iidb_collection": "soundbites" if collection == "soundbite" else collection + "s",
+        "page_url": IIDB_BASE_URL,
+    }
+    if kind == "soundbite":
+        display_name = str(asset.get("display_name") or "").strip() or "iiDB Soundbite"
+        result.update({
+            "title": display_name,
+            "soundbite_title": display_name,
+            "audio_url": media_url,
+            "preview_url": str(asset.get("preview_url") or media_url),
+            "source": "iiDB Soundbite",
+        })
+        try:
+            duration_ms = int(asset.get("duration_ms") or 0)
+        except Exception:
+            duration_ms = 0
+        if duration_ms > 0:
+            result["duration_seconds"] = duration_ms / 1000.0
+        return result
+
+    resolution = str(asset.get("resolution") or "").strip()
+    try:
+        width = int(asset.get("resolution_width") or 0)
+        height = int(asset.get("resolution_height") or 0)
+    except Exception:
+        width, height = 0, 0
+    if (not width or not height) and resolution:
+        match = re.fullmatch(r"\s*(\d+)\s*x\s*(\d+)\s*", resolution, re.IGNORECASE)
+        if match:
+            width, height = int(match.group(1)), int(match.group(2))
+    result.update({
+        "image_url": media_url,
+        "thumbnail_url": str(asset.get("library_preview_url") or asset.get("preview_url") or media_url),
+        "preview_url": str(asset.get("preview_url") or media_url),
+        "source": "iiDB Hero" if collection == "hero" else "iiDB Banner",
+        "asset_type": collection,
+        "resolution": resolution or "iiDB Asset",
+        "width": width,
+        "height": height,
+    })
+    return result
+
+
+def _iidb_search_api(query: str, kind: str) -> Tuple[List[Dict[str, Any]], List[int]]:
+    explicit_id = _iidb_explicit_game_id(query)
+    asset_types = ["soundbite"] if kind == "soundbite" else ["banner", "hero"]
+    collected: List[Dict[str, Any]] = []
+
+    if explicit_id is not None:
+        for asset_type in asset_types:
+            payload = _iidb_request_json("assets/browse/enriched", {
+                "parent_id": explicit_id,
+                "asset_type": asset_type,
+                "skip": 0,
+                "limit": 40,
+            })
+            for asset in payload.get("items", []):
+                if not isinstance(asset, dict):
+                    continue
+                parent = {"id": explicit_id, "name": asset.get("parent_name")}
+                result = _iidb_api_asset_result(asset, parent, kind)
+                if result:
+                    collected.append(result)
+        return collected, [explicit_id]
+
+    grouped_results: Dict[int, List[Dict[str, Any]]] = {}
+    group_names: Dict[int, str] = {}
+    for asset_type in asset_types:
+        payload = _iidb_request_json("assets/search/groups", {
+            "q": query,
+            "asset_type": asset_type,
+            # Anonymous callers are limited to four groups/assets by iiDB.
+            "parent_limit": 4,
+            "assets_per_parent": 4,
+        })
+        for group in payload.get("groups", []):
+            if not isinstance(group, dict):
+                continue
+            parent = group.get("parent") if isinstance(group.get("parent"), dict) else {}
+            try:
+                parent_id = int(parent.get("id") or 0)
+            except Exception:
+                parent_id = 0
+            parent_name = str(parent.get("name") or "")
+            if parent_id <= 0 or _iidb_title_score(query, parent_name) < 650:
+                continue
+            group_names[parent_id] = parent_name
+            bucket = grouped_results.setdefault(parent_id, [])
+            for asset in group.get("assets", []):
+                if isinstance(asset, dict):
+                    result = _iidb_api_asset_result(asset, parent, kind)
+                    if result:
+                        bucket.append(result)
+
+    if not grouped_results:
+        return [], []
+    selected_id = sorted(
+        grouped_results,
+        key=lambda parent_id: (-_iidb_title_score(query, group_names.get(parent_id, "")), parent_id),
+    )[0]
+    selected_parent = {"id": selected_id, "name": group_names.get(selected_id, "")}
+    expanded: List[Dict[str, Any]] = []
+    for asset_type in asset_types:
+        try:
+            payload = _iidb_request_json("assets/browse/enriched", {
+                "parent_id": selected_id,
+                "asset_type": asset_type,
+                "skip": 0,
+                "limit": 40,
+            })
+            for asset in payload.get("items", []):
+                if isinstance(asset, dict):
+                    result = _iidb_api_asset_result(asset, selected_parent, kind)
+                    if result:
+                        expanded.append(result)
+        except Exception as error:
+            _log_warning(f"iiDB browse failed for {asset_type}/{selected_id}: {error}")
+    return (expanded or grouped_results[selected_id]), [selected_id]
 
 
 def _iidb_request_text(url: str, timeout: int = 6, extra_headers: Optional[Dict[str, str]] = None) -> str:
@@ -3728,6 +3894,15 @@ def _iidb_title_score(query: str, candidate: str) -> int:
         return 1000
     if left in right or right in left:
         return 760
+    left_numbers = set(re.findall(r"\b\d+\b", left))
+    right_numbers = set(re.findall(r"\b\d+\b", right))
+    if left_numbers != right_numbers and (left_numbers or right_numbers):
+        return 0
+    character_ratio = difflib.SequenceMatcher(None, left, right).ratio()
+    if character_ratio >= 0.84:
+        # Preserve a strict floor while tolerating common store-title typos such
+        # as "Odissey" versus "Odyssey" without matching a different game.
+        return min(950, 700 + int(((character_ratio - 0.84) / 0.16) * 250))
     left_tokens = set(left.split())
     right_tokens = set(right.split())
     if not left_tokens or not right_tokens:
@@ -5228,6 +5403,35 @@ def _search_iidb_assets_sync(title: str, kind: str, enrich_metadata: bool = True
     query = str(title or "").strip()
     if not query or kind not in {"banner", "soundbite"}:
         return {"ok": False, "results": [], "games": [], "message": "Invalid iiDB search."}
+
+    try:
+        api_results, api_game_ids = _iidb_search_api(query, kind)
+        unique_api_results: List[Dict[str, Any]] = []
+        seen_api_urls = set()
+        for item in api_results:
+            media_url = str(item.get("audio_url") or item.get("image_url") or "")
+            key = media_url.split("?", 1)[0].lower()
+            if key and key not in seen_api_urls:
+                seen_api_urls.add(key)
+                unique_api_results.append(item)
+        if kind != "soundbite":
+            unique_api_results.sort(key=_iidb_bulk_asset_priority_key)
+        unique_api_results = unique_api_results[:30]
+        _log_info(f"iiDB API search kind={kind} title={query} game_ids={api_game_ids} assets={len(unique_api_results)}")
+        noun = "Soundbite" if kind == "soundbite" else "Asset"
+        return {
+            "ok": bool(unique_api_results),
+            "results": unique_api_results,
+            "games": [{"id": game_id} for game_id in api_game_ids],
+            "message": (
+                f"Found {len(unique_api_results)} iiDB {noun}{'' if len(unique_api_results) == 1 else 's'}."
+                if unique_api_results
+                else ("No iiDB Soundbites found for this title." if kind == "soundbite" else "No iiDB Banners or Heroes found for this title.")
+            ),
+            "catalog_url": _iidb_catalog_url(kind),
+        }
+    except Exception as error:
+        _log_warning(f"iiDB API unavailable kind={kind} title={query}; using website fallback: {error}")
 
     explicit_id = _iidb_explicit_game_id(query)
     catalog_urls = [] if explicit_id is not None else _iidb_catalog_request_urls(query, kind)

@@ -39,7 +39,7 @@ Copy-Item -Path (Join-Path $Root "helpers/*") -Destination (Join-Path $Installer
 Compress-Archive -Path $InstallerStage -DestinationPath $InstallerZip -CompressionLevel Optimal -Force
 
 New-Item -ItemType Directory -Force -Path $ProjectStage | Out-Null
-$ProjectExclude = @("build-package", "node_modules", "__pycache__", "logs")
+$ProjectExclude = @(".git", "build-package", "data", "node_modules", "__pycache__", "logs")
 Get-ChildItem -LiteralPath $Root -Force | Where-Object {
   $ProjectExclude -notcontains $_.Name
 } | ForEach-Object {

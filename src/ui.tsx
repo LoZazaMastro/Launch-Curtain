@@ -2053,7 +2053,7 @@ const pruneLaunchCurtainMenu = (children) => {
     if (existing !== -1)
         list.splice(existing, 1);
 };
-const isGameContextMenu = (items) => {
+const hasAppPropertiesAction = (items) => {
     if (!items?.length)
         return false;
     return !!DFL.findInReactTree(items, (node) => {
@@ -2063,31 +2063,13 @@ const isGameContextMenu = (items) => {
             node?.onSelected,
             node?.onClick
         ].filter((handler) => typeof handler === "function").map((handler) => handler.toString()).join("\n");
-        return source.includes("launchSource") ||
-            source.includes("PlayGame") ||
-            source.includes("Launch") ||
-            source.includes("AppProperties") ||
+        return source.includes("AppProperties") ||
             source.includes("ShowAppProperties");
     });
 };
+const isGameContextMenu = (items) => hasAppPropertiesAction(items);
 const isLibraryAppContextMenu = (items) => {
-    if (!items?.length)
-        return false;
-    return !!DFL.findInReactTree(items, (node) => {
-        const source = [
-            node?.props?.onSelected,
-            node?.props?.onClick,
-            node?.onSelected,
-            node?.onClick
-        ].filter((handler) => typeof handler === "function").map((handler) => handler.toString()).join("\n");
-        if (!source)
-            return false;
-        return source.includes("launchSource") ||
-            source.includes("AppProperties") ||
-            source.includes("ShowAppProperties") ||
-            source.includes("InstallApp") ||
-            source.includes("Download");
-    });
+    return hasAppPropertiesAction(items);
 };
 const deriveAppIdFromMenuItems = (items, fallback) => {
     if (!items?.length)
@@ -2145,8 +2127,10 @@ const patchLaunchCurtainMenuItems = (menuItems, fallbackAppId) => {
     return derivedAppId;
 };
 const contextMenuPatch = (LibraryContextMenu) => {
-    const patches = { unpatch: () => undefined };
+    const patches = { unpatch: () => undefined, outer: null, inner: null };
     const state = { appId: 0 };
+    const nestedPatches = Array();
+    const patchedPrototypes = new WeakSet();
     patches.outer = DFL.afterPatch(LibraryContextMenu.prototype, "render", (_args, component) => {
         let appId = extractAppId(component?._owner?.pendingProps?.overview?.appid);
         try {
@@ -2161,40 +2145,55 @@ const contextMenuPatch = (LibraryContextMenu) => {
             state.appId = appId;
         if (!patches.inner) {
             patches.inner = DFL.afterPatch(component, "type", (_unused, ret) => {
-                DFL.afterPatch(ret.type.prototype, "render", (_args2, ret2) => {
-                    const menuItems = ret2?.props?.children?.[0] ?? ret2?.props?.children;
-                    try {
-                        const fallbackAppId = extractAppIdFromTree(ret2) || state.appId;
-                        const patched = patchLaunchCurtainMenuItems(menuItems, fallbackAppId);
-                        if (patched)
-                            state.appId = patched;
-                    }
-                    catch (_error) {}
-                    return ret2;
-                });
-                DFL.afterPatch(ret.type.prototype, "shouldComponentUpdate", ([nextProps], shouldUpdate) => {
-                    try {
-                        if (shouldUpdate === true) {
-                            const fallbackAppId = extractAppIdFromTree(nextProps?.children) || state.appId;
-                            const patched = patchLaunchCurtainMenuItems(nextProps?.children, fallbackAppId);
+                const prototype = ret?.type?.prototype;
+                if (!prototype || patchedPrototypes.has(prototype))
+                    return ret;
+                patchedPrototypes.add(prototype);
+                if (typeof prototype.render === "function") {
+                    nestedPatches.push(DFL.afterPatch(prototype, "render", (_args2, ret2) => {
+                        const menuItems = ret2?.props?.children?.[0] ?? ret2?.props?.children;
+                        try {
+                            const routeAppId = readAppIdFromLibraryLocation();
+                            const fallbackAppId = extractAppIdFromTree(ret2) || routeAppId;
+                            const patched = patchLaunchCurtainMenuItems(menuItems, fallbackAppId);
                             if (patched)
                                 state.appId = patched;
                         }
-                    }
-                    catch (_error) {}
-                    return shouldUpdate;
-                });
+                        catch (_error) {}
+                        return ret2;
+                    }));
+                }
+                if (typeof prototype.shouldComponentUpdate === "function") {
+                    nestedPatches.push(DFL.afterPatch(prototype, "shouldComponentUpdate", ([nextProps], shouldUpdate) => {
+                        try {
+                            if (shouldUpdate === true) {
+                                const routeAppId = readAppIdFromLibraryLocation();
+                                const fallbackAppId = extractAppIdFromTree(nextProps?.children) || routeAppId;
+                                const patched = patchLaunchCurtainMenuItems(nextProps?.children, fallbackAppId);
+                                if (patched)
+                                    state.appId = patched;
+                            }
+                        }
+                        catch (_error) {}
+                        return shouldUpdate;
+                    }));
+                }
                 return ret;
             });
         }
         else if (Array.isArray(component.props.children)) {
-            const patched = patchLaunchCurtainMenuItems(component.props.children, appId || state.appId);
+            const routeAppId = readAppIdFromLibraryLocation();
+            const patched = patchLaunchCurtainMenuItems(component.props.children, appId || routeAppId);
             if (patched)
                 state.appId = patched;
         }
         return component;
     });
-    patches.unpatch = () => { patches.outer?.unpatch?.(); patches.inner?.unpatch?.(); };
+    patches.unpatch = () => {
+        nestedPatches.splice(0).forEach((patch) => patch?.unpatch?.());
+        patches.outer?.unpatch?.();
+        patches.inner?.unpatch?.();
+    };
     return patches;
 };
 const installLaunchCurtainContextMenu = () => {
