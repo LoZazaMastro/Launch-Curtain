@@ -2,9 +2,9 @@
 
 # Launch Curtain
 
-### Dal menu al gioco, senza finestre fuori posto.
+### From the menu to the game, without out-of-place windows.
 
-Nasconde desktop, launcher e passaggi poco eleganti dietro una schermata di avvio costruita per Steam Big Picture.
+Hides the desktop, launchers, and unpolished transitions behind a startup screen built for Steam Big Picture.
 
 [![Release](https://img.shields.io/github/v/release/LoZazaMastro/Launch-Curtain?style=for-the-badge&label=Release&labelColor=111111&color=ffffff)](https://github.com/LoZazaMastro/Launch-Curtain/releases/latest)
 [![Licenza MIT](https://img.shields.io/badge/Licenza-MIT-ffffff?style=for-the-badge&labelColor=111111)](LICENSE)
@@ -13,51 +13,51 @@ Nasconde desktop, launcher e passaggi poco eleganti dietro una schermata di avvi
 
 <img width="100%" alt="Launch Curtain in Steam Big Picture" src="https://github.com/user-attachments/assets/8dcaf273-50da-4db1-ad2a-ca172f1627bd" />
 
-## Un avvio da console anche su Windows
+## A console-like boot experience even on Windows
 
-Launch Curtain copre i momenti in cui un gioco apre launcher, finestre intermedie o il desktop. La transizione parte dentro Steam, resta controllabile dal gamepad e si chiude quando il gioco raggiunge uno stato stabile a schermo intero.
+Launch Curtain covers the moments when a game opens launchers, intermediate windows, or the desktop. The transition starts inside Steam, remains controllable via gamepad, and closes once the game reaches a stable full-screen state.
 
-Puoi scegliere fra tre modalità:
+You can choose from three modes:
 
-- **Moderna:** disegna la schermata direttamente nell'interfaccia Big Picture; è la modalità predefinita.
-- **Classica:** usa l'overlay esterno Windows della serie 1.5.
-- **Disattivata:** lascia l'avvio originale.
+- **Modern:** draws the screen directly within the Big Picture interface; this is the default mode.
+- **Classic:** uses the external Windows overlay from the 1.5 series.
+- **Disabled:** leaves the original startup process.
 
-Le impostazioni estetiche per gioco vengono condivise fra Moderna e Classica.
+Aesthetic settings per game are shared between Modern and Classic modes.
 
-## Cosa puoi personalizzare
+## What you can customize
 
-- attivazione, ritardo di uscita e comportamento per ogni gioco;
-- sfondo, opacità, posizione, scala e zoom;
-- logo del gioco, posizione, dimensione e ombra;
-- testo sullo stato di avvio;
-- chiusura manuale da controller o tastiera;
-- immagini locali, logo Steam, fallback Playhub e risultati dai provider supportati;
-- **Soundbite** per gioco, con anteprima, importazione locale e volume dedicato;
-- volume globale dei Soundbite nel QAM, applicato senza cambiare il valore del singolo titolo.
+- activation, exit delay, and behavior for each game;
+- background, opacity, position, scale, and zoom;
+- game logo, position, size, and shadow;
+- startup status text;
+- manual closing via controller or keyboard;
+- local images, Steam logo, Playhub fallback, and results from supported providers;
+- **Soundbites** per game, featuring previews, local importing, and dedicated volume;
+- global Soundbite volume in the QAM, applied without changing individual title values.
 
-## Sorgenti e lavori in serie
+## Sources and bulk operations
 
-Gli sfondi possono arrivare da PlayStation Store, IGDB, AlphaCoders, Nintendo Store, Xbox Store, iiDB Assets e SteamGridDB Heroes. SteamGridDB viene interrogato esclusivamente per gli Hero e richiede una [chiave API personale](https://www.steamgriddb.com/profile/preferences/api).
+Backgrounds can be fetched from PlayStation Store, IGDB, AlphaCoders, Nintendo Store, Xbox Store, iiDB Assets, and SteamGridDB Heroes. SteamGridDB is queried exclusively for Heroes and requires a [personal API key](https://www.steamgriddb.com/profile/preferences/api).
 
-Il QAM può completare Soundbite e Asset iiDB mancanti per i giochi installati, gestire le esclusioni, mostrare i titoli con o senza Soundbite e ripulire i soli file gestiti dal plugin. Gli artwork e i file audio scelti manualmente non vengono sovrascritti o cancellati dai lavori automatici.
+The QAM can fill in missing Soundbites and iiDB Assets for installed games, manage exclusions, show titles with or without Soundbites, and clean up only the files managed by the plugin. Manually chosen artwork and audio files are never overwritten or deleted by automatic tasks.
 
-## Backup e ripristino
+## Backup and restore
 
-**Crea backup** salva impostazioni, asset gestiti e copie dei file locali referenziati in una cartella `Launch-Curtain-Backup-*`. **Ripristina backup** valida il contenuto prima di toccare i dati attivi, crea una copia di rollback e rimappa i percorsi locali, rendendo il backup trasferibile.
+**Create backup** saves settings, managed assets, and copies of referenced local files into a `Launch-Curtain-Backup-*` folder. **Restore backup** validates the content before touching active data, creates a rollback copy, and remaps local paths, making the backup transferable.
 
-## Installazione
+## Installation
 
-Puoi installare e aggiornare Launch Curtain dal Plugin Store di [Playhub](https://github.com/LoZazaMastro/Playhub), oppure manualmente:
+You can install and update Launch Curtain from the [Playhub](https://github.com/LoZazaMastro/Playhub) Plugin Store, or manually:
 
-1. scarica `Launch-Curtain_Installer-2.5.1.zip` dall'[ultima release](https://github.com/LoZazaMastro/Launch-Curtain/releases/latest);
-2. abilita la modalità sviluppatore di Decky;
-3. scegli **Decky → Impostazioni → Sviluppatore → Installa plugin da ZIP**;
-4. dopo una sostituzione manuale, esci completamente da Steam e riaprilo: chiudere soltanto la finestra non svuota la cache del frontend.
+1. download `Launch-Curtain_Installer-2.5.1.zip` from the [latest release](https://github.com/LoZazaMastro/Launch-Curtain/releases/latest);
+2. enable Decky's developer mode;
+3. choose **Decky → Settings → Developer → Install plugin from ZIP**;
+4. after a manual replacement, completely exit Steam and reopen it: simply closing the window will not clear the frontend cache.
 
-## Sviluppo
+## Development
 
-Il sorgente mantenuto è in `src/`; `dist/index.js` è un artefatto di build.
+The maintained source is in `src/`; `dist/index.js` is a build artifact.
 
 ```powershell
 node tools/build-local.mjs
@@ -65,16 +65,16 @@ node --check dist/index.js
 python -m py_compile main.py
 ```
 
-Con le dipendenze installate sono disponibili anche `npm run test`, `npm run build` e `package-win.ps1`.
+With dependencies installed, `npm run test`, `npm run build`, and `package-win.ps1` are also available.
 
-## Licenza e riconoscimenti
+## License and credits
 
-Launch Curtain è distribuito con licenza [MIT](LICENSE). Dipendenze e attribuzioni sono raccolte in [NOTICE](NOTICE). Gli asset ottenuti da iiDB restano soggetti alla [licenza iiSU Network](https://iisu.network/license); l'integrazione non li ripubblica sotto MIT.
+Launch Curtain is distributed under the [MIT](LICENSE) license. Dependencies and attributions are collected in [NOTICE](NOTICE). Assets obtained from iiDB remain subject to the [iiSU Network license](https://iisu.network/license); the integration does not republish them under MIT.
 
-Un ringraziamento al team e alla community iiSU per iiDB, i suoi artwork e i Soundbite.
+Special thanks to the iiSU team and community for iiDB, its artwork, and the Soundbites.
 
 <div align="center">
 
-Creato e mantenuto da **[LoZazaMastro](https://github.com/LoZazaMastro)**.
+Created and maintained by **[LoZazaMastro](https://github.com/LoZazaMastro)**.
 
 </div>
