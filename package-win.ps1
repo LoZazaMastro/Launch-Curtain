@@ -20,8 +20,8 @@ New-Item -ItemType Directory -Force -Path (Join-Path $InstallerStage "dist") | O
 New-Item -ItemType Directory -Force -Path (Join-Path $InstallerStage "assets") | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $InstallerStage "helpers") | Out-Null
 
-$Node = if ($env:CODEX_NODE_DIR) { Join-Path $env:CODEX_NODE_DIR "node.exe" } else { (Get-Command node -ErrorAction Stop).Source }
-$Python = if ($env:CODEX_PYTHON) { $env:CODEX_PYTHON } else { (Get-Command python -ErrorAction Stop).Source }
+$Node = if ($env:PLAYHUB_NODE_DIR) { Join-Path $env:PLAYHUB_NODE_DIR "node.exe" } else { (Get-Command node -ErrorAction Stop).Source }
+$Python = if ($env:PLAYHUB_PYTHON) { $env:PLAYHUB_PYTHON } else { (Get-Command python -ErrorAction Stop).Source }
 
 & $Node (Join-Path $Root "tools/build-local.mjs")
 if ($LASTEXITCODE -ne 0) { throw "Launch Curtain frontend build failed" }
