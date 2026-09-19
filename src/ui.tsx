@@ -1,3 +1,4 @@
+import { insertPluginSection } from "./pluginMenuSection";
 import { SP_REACT, SP_JSX, DFL, toaster, openFilePicker } from "./decky";
 import { FaDownload, FaFolderOpen, FaImage, FaMinus, FaPause, FaPlay, FaPlus, FaRocket, FaTools, FaTrashAlt, FaUndo } from "react-icons/fa";
 import { I18N, getStrings } from "./strings";
@@ -2109,10 +2110,8 @@ const insertLaunchCurtainMenu = (children, appId) => {
         DFL.Navigation.Navigate(`/launch-curtain/${latestAppId}`);
     };
     const menuItem = window.SP_REACT.createElement(DFL.MenuItem, { key: LAUNCH_CURTAIN_MENU_KEY, onSelected: openLaunchCurtain }, "Launch Curtain");
-    if (propertiesMenuItemIdx >= 0)
-        list.splice(propertiesMenuItemIdx, 0, menuItem);
-    else
-        list.push(menuItem);
+    const grouped = insertPluginSection(window.SP_REACT, list, menuItem);
+    if (grouped !== list) list.splice(0, list.length, ...grouped);
 };
 const patchLaunchCurtainMenuItems = (menuItems, fallbackAppId) => {
     const entries = coerceMenuChildren(menuItems);

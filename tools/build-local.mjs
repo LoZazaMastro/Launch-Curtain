@@ -19,7 +19,7 @@ function strip(code) {
 
 const order = [
   "backend.ts", "strings.ts", "constants.ts",
-  "PlayButtonLaunchHook.ts", "ui.tsx",
+  "PlayButtonLaunchHook.ts", "pluginMenuSection.ts", "ui.tsx",
   "steamControllerClose.ts", "launchInfo.ts", "index.tsx",
 ];
 

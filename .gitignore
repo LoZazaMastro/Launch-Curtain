@@ -6,3 +6,12 @@ __pycache__/
 .DS_Store
 launch-curtain.json
 launch-images/
+CHANGELOG*
+HANDOVER*
+HOTFIX*.md
+HOTFIX*.txt
+TESTING_*
+TEST_REPORT*
+SOURCE_RECOVERY*
+STEAM_SNAPSHOT_AUDIT*
+INSTALL_*
