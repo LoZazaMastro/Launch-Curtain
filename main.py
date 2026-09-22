@@ -9952,6 +9952,7 @@ class Plugin:
 
 
     def _restore_modern_launcher_windows(self, reason: str = "modern curtain ended") -> None:
+        self.modern_focus_probe = None
         self.modern_release_after = 0.0
         self.modern_handoff_hwnd = 0
         self.modern_handoff_pid = 0
@@ -9969,6 +9970,63 @@ class Plugin:
         self.modern_hidden_launcher_windows = {}
         _log_info(f"Modern launcher suppression restored={restored}/{hidden_count} reason={reason}")
 
+    def _modern_candidate_focus_probe(self, processes: Dict[int, Dict[str, Any]], launcher_names: set[str]) -> bool:
+        """Give a stable render HWND one bounded foreground interval behind the pinned curtain."""
+        now = time.time()
+        active = getattr(self, "modern_focus_probe", None)
+        if active:
+            pid, hwnd = active["pid"], active["hwnd"]
+            if (now < active["until"] and pid in processes and pid in self.launch_game_candidates
+                    and hwnd in _windows_for_pid(pid, limit=12)
+                    and not _window_is_auxiliary_game_surface(hwnd)):
+                return True
+            self.modern_focus_probe = None
+            _log_info(f"Modern render focus probe ended pid={pid} hwnd={hwnd}")
+            return False
+        for pid, candidate in self.launch_game_candidates.items():
+            if pid not in processes or now - float(candidate.get("first_seen", now)) < 3.0:
+                continue
+            hwnd = int(candidate.get("protected_hwnd", 0) or 0)
+            process = str(candidate.get("protected_process", "")).lower()
+            title = str(candidate.get("protected_title", "")).lower()
+            attempted = candidate.setdefault("focus_probe_hwnds", set())
+            surface = candidate.get("surfaces", {}).get(str(hwnd), {})
+            # RAP64 starts with a stable 711x576 render window on a 4K monitor;
+            # it cannot reach fullscreen until it receives its first input focus.
+            geometry = surface.get("geometry")
+            rap64_render_window = (process == "raproject64.exe" and geometry is not None
+                                  and geometry[2] - geometry[0] >= 600
+                                  and geometry[3] - geometry[1] >= 400)
+            reason = (
+                "no-protected-window" if hwnd <= 0 else
+                "already-probed" if hwnd in attempted else
+                "launcher-process" if process in launcher_names else
+                "launcher-title" if any(hint in title for hint in LAUNCHER_TITLE_HINTS) else
+                "surface-untracked" if not surface else
+                "surface-young" if now - float(surface.get("first_seen", now)) < 1.0 else
+                "geometry-changing" if now - float(surface.get("last_geometry_change", now)) < 0.65 else
+                "window-not-owned" if hwnd not in _windows_for_pid(pid, limit=12) else
+                "auxiliary-window" if _window_is_auxiliary_game_surface(hwnd) else
+                "surface-too-small" if not rap64_render_window and not _window_is_process_ready_game_surface(hwnd) else ""
+            )
+            if reason:
+                if reason != "already-probed" and now - candidate.get("focus_probe_diagnostic_at", 0.0) >= 5.0:
+                    candidate["focus_probe_diagnostic_at"] = now
+                    _log_info(f"Modern render focus probe deferred pid={pid} hwnd={hwnd} reason={reason} "
+                              f"process={process} title={title!r} geometry={surface.get('geometry')} "
+                              f"tracked_hwnds={list(candidate.get('surfaces', {}))}")
+                continue
+            # Pinning retains the existing visual cover but does not activate Steam.
+            if self._pin_steam_for_modern_curtain() <= 0:
+                return False
+            attempted.add(hwnd)
+            focused = _focus_window(hwnd)
+            _log_info(f"Modern render focus probe started pid={pid} hwnd={hwnd} focused={focused} duration_ms=850")
+            if focused:
+                self.modern_focus_probe = {"pid": pid, "hwnd": hwnd, "until": now + 0.85}
+                return True
+        return False
+
     def _protect_modern_curtain(
         self,
         foreground: Dict[str, Any],
@@ -9976,6 +10034,11 @@ class Plugin:
         processes: Dict[int, Dict[str, Any]]
     ) -> None:
         if not self.modern_active or not _is_windows():
+            return
+
+        if self.modern_release_after <= 0 and self._modern_candidate_focus_probe(processes, launcher_names):
+            # Do not undo activation in the same monitor tick. Some emulators create
+            # their rendering surface only while their window has input focus.
             return
 
         candidate_pids = set(self.launch_game_candidates.keys())
@@ -10009,13 +10072,6 @@ class Plugin:
                     candidate_state["protected_last_seen"] = time.time()
                     candidate_state["protected_process"] = process
                     candidate_state["protected_title"] = str(window.get("title", ""))
-                    if pid not in self.launch_candidate_focus_attempted:
-                        activated = _focus_window(hwnd)
-                        self.launch_candidate_focus_attempted.add(pid)
-                        _log_info(
-                            "Modern launch candidate activated behind Steam "
-                            f"pid={pid} hwnd={hwnd} focused={activated}"
-                        )
                     if _set_window_topmost(hwnd, False):
                         demoted += 1
         except Exception as error:
