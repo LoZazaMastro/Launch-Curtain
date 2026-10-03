@@ -5785,6 +5785,29 @@ def _process_image_path(pid: int) -> str:
         kernel32.CloseHandle(handle)
 
 
+def _process_started_at(pid: int) -> float:
+    """Read a launch candidate's creation time only while a launch is armed."""
+    if not _is_windows() or pid <= 0:
+        return 0.0
+    kernel32 = ctypes.windll.kernel32
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+    kernel32.GetProcessTimes.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return 0.0
+    try:
+        creation, exited, kernel, user = (wintypes.FILETIME() for _ in range(4))
+        if not kernel32.GetProcessTimes(handle, ctypes.byref(creation), ctypes.byref(exited), ctypes.byref(kernel), ctypes.byref(user)):
+            return 0.0
+        return ((creation.dwHighDateTime << 32) | creation.dwLowDateTime) / 10_000_000 - 11_644_473_600
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _process_name(pid: int) -> str:
     image_path = _process_image_path(pid)
     return os.path.basename(image_path) if image_path else ""
@@ -6708,6 +6731,7 @@ class Plugin:
         self.black_cover_process: Optional[subprocess.Popen[Any]] = None
         self.black_cover_command_sequence = 0
         self.monitor_task: Optional[asyncio.Task[Any]] = None
+        self.monitor_wake = asyncio.Event()
         self.last_curtain_started_at = 0.0
         self.launch_pending_until = 0.0
         self.launch_request_started_at = 0.0
@@ -6776,7 +6800,8 @@ class Plugin:
         self._reset_process_tracking()
         if _is_windows():
             self._cleanup_stale_black_cover_helpers()
-            self._start_black_cover()
+            if self.settings.get("auto_mode") and self.settings.get("curtain_mode") == "classic":
+                self._start_black_cover()
         if self.settings.get("auto_mode"):
             self._ensure_monitor()
         _log_info(
@@ -8728,18 +8753,17 @@ class Plugin:
             "message": f"Cached {cached} games."
         }
 
-    async def get_status(self) -> Dict[str, Any]:
-        try:
-            foreground = _foreground_window()
-        except Exception as error:
-            _log_warning(f"Could not read foreground window: {error}")
-            foreground = {"hwnd": 0, "title": "", "pid": 0, "process": "", "platform": sys.platform}
-
-        try:
-            visible_windows = _visible_windows(limit=8)
-        except Exception as error:
-            _log_warning(f"Could not read visible windows: {error}")
-            visible_windows = []
+    async def get_status(self, diagnostics: bool = False) -> Dict[str, Any]:
+        # Launch/controller polling consumes cached state. Window enumeration is
+        # only needed for an explicit diagnostic request.
+        foreground = {}
+        visible_windows = []
+        if diagnostics:
+            try:
+                foreground = _foreground_window()
+                visible_windows = _visible_windows(limit=8)
+            except Exception as error:
+                _log_warning(f"Could not read window diagnostics: {error}")
 
         # Foreground ownership is not playback state: opening Steam/QAM over a game
         # must not look like a game exit. Reuse the process snapshot maintained by
@@ -9293,9 +9317,32 @@ class Plugin:
         return {"ok": True, "message": "Auto mode disabled."}
 
     def _ensure_monitor(self) -> None:
+        self.monitor_wake.set()
         if self.monitor_task is None or self.monitor_task.done():
             _log_info("Starting foreground/process monitor")
             self.monitor_task = asyncio.get_event_loop().create_task(self._monitor_foreground())
+
+    def _monitor_has_work(self) -> bool:
+        now = time.time()
+        return bool(
+            self.modern_active or self.modern_release_after > 0
+            or self.launch_pending_until > now or self._is_curtain_running()
+            or self.active_game_pids or self.pending_steam_refocus_until > 0
+            or self.modern_hidden_launcher_windows or self.modern_steam_topmost_hwnd
+            or self.launch_black_bridge_until > 0
+        )
+
+    def _monitor_exit_tracking_only(self) -> bool:
+        # After Modern handoff, the game's PID is all we need until it exits.
+        # Keep pending focus restoration alive; that method performs its own
+        # window checks only after an actual exit has scheduled a refocus.
+        return bool(
+            (self.active_game_pids or self.pending_steam_refocus_until > 0)
+            and not self.modern_active and self.modern_release_after <= 0
+            and self.launch_pending_until <= 0 and not self._is_curtain_running()
+            and not self.modern_hidden_launcher_windows and not self.modern_steam_topmost_hwnd
+            and self.launch_black_bridge_until <= 0
+        )
 
 
     async def _start_curtain_for_detected_launch(self, process_name: str, pid: int) -> None:
@@ -9378,6 +9425,13 @@ class Plugin:
             )
 
             if not parent_is_launch_source:
+                continue
+
+            # The monitor sleeps between launches, so its previous snapshot can
+            # include a long idle gap. Ignore old Steam children from that gap,
+            # while retaining games created just before the backend launch signal.
+            started_at = _process_started_at(pid)
+            if started_at > 0 and started_at < self.launch_request_started_at - 2.0:
                 continue
 
             self.launch_chain_pids[pid] = now + 45
@@ -10106,10 +10160,18 @@ class Plugin:
         _log_info(f"Monitor loop started launcher_names={sorted(launcher_names)}")
 
         while bool(self.settings.get("auto_mode")):
+            if not self._monitor_has_work():
+                self.monitor_wake.clear()
+                await self.monitor_wake.wait()
+                continue
             try:
                 processes = _process_snapshot()
                 _mode = str(getattr(self, "current_launch_mode", None) or self.settings.get("curtain_mode", "modern"))
                 _modern = _mode == "modern"
+                if _modern and self._monitor_exit_tracking_only():
+                    await self._restore_steam_focus_after_game_exit(processes)
+                    await asyncio.sleep(0.5)
+                    continue
                 escape_pressed = _async_key_down(0x1B)
                 if _modern and self.modern_active and escape_pressed and not self.modern_escape_down:
                     self.modern_escape_down = True

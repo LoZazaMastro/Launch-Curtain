@@ -30,7 +30,7 @@ if ($LASTEXITCODE -ne 0) { throw "dist/index.js validation failed" }
 & $Python -m py_compile (Join-Path $Root "main.py")
 if ($LASTEXITCODE -ne 0) { throw "main.py validation failed" }
 
-foreach ($File in @("plugin.json", "main.py", "package.json", "LICENSE", "NOTICE", "README.md", "VERSION.txt")) {
+foreach ($File in @("plugin.json", "main.py", "package.json", "LICENSE", "NOTICE", "README.md", "VERSION.txt", "CHANGELOG.md")) {
   Copy-Item -LiteralPath (Join-Path $Root $File) -Destination $InstallerStage -Force
 }
 Copy-Item -LiteralPath (Join-Path $Root "dist/index.js") -Destination (Join-Path $InstallerStage "dist/index.js") -Force
@@ -44,6 +44,19 @@ Get-ChildItem -LiteralPath $Root -Force | Where-Object {
   $ProjectExclude -notcontains $_.Name
 } | ForEach-Object {
   Copy-Item -LiteralPath $_.FullName -Destination $ProjectStage -Recurse -Force
+}
+$ProjectPrefix = [IO.Path]::GetFullPath($ProjectStage).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+Get-ChildItem -LiteralPath $ProjectStage -Recurse -File | Where-Object {
+  $_.Extension -in @('.pyc', '.pyo')
+} | ForEach-Object {
+  if (-not $_.FullName.StartsWith($ProjectPrefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe cached bytecode target' }
+  Remove-Item -LiteralPath $_.FullName -Force
+}
+Get-ChildItem -LiteralPath $ProjectStage -Recurse -Directory | Where-Object {
+  $_.Name -eq '__pycache__'
+} | Sort-Object { $_.FullName.Length } -Descending | ForEach-Object {
+  if (-not $_.FullName.StartsWith($ProjectPrefix, [StringComparison]::OrdinalIgnoreCase) -or ($_.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Unsafe cache directory target' }
+  Remove-Item -LiteralPath $_.FullName -Recurse -Force
 }
 Compress-Archive -Path $ProjectStage -DestinationPath $ProjectZip -CompressionLevel Optimal -Force
 Remove-Item -LiteralPath $StagingRoot -Recurse -Force
