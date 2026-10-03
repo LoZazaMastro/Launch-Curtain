@@ -1,3 +1,5 @@
+param([switch]$InstallerOnly)
+
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -30,7 +32,7 @@ if ($LASTEXITCODE -ne 0) { throw "dist/index.js validation failed" }
 & $Python -m py_compile (Join-Path $Root "main.py")
 if ($LASTEXITCODE -ne 0) { throw "main.py validation failed" }
 
-foreach ($File in @("plugin.json", "main.py", "package.json", "LICENSE", "NOTICE", "README.md", "VERSION.txt", "CHANGELOG.md")) {
+foreach ($File in @("plugin.json", "main.py", "managed_assets.py", "package.json", "LICENSE", "NOTICE", "README.md", "VERSION.txt", "CHANGELOG.md")) {
   Copy-Item -LiteralPath (Join-Path $Root $File) -Destination $InstallerStage -Force
 }
 Copy-Item -LiteralPath (Join-Path $Root "dist/index.js") -Destination (Join-Path $InstallerStage "dist/index.js") -Force
@@ -38,6 +40,7 @@ Copy-Item -Path (Join-Path $Root "assets/*") -Destination (Join-Path $InstallerS
 Copy-Item -Path (Join-Path $Root "helpers/*") -Destination (Join-Path $InstallerStage "helpers") -Recurse -Force
 Compress-Archive -Path $InstallerStage -DestinationPath $InstallerZip -CompressionLevel Optimal -Force
 
+if (-not $InstallerOnly) {
 New-Item -ItemType Directory -Force -Path $ProjectStage | Out-Null
 $ProjectExclude = @(".git", "build-package", "data", "node_modules", "__pycache__", "logs")
 Get-ChildItem -LiteralPath $Root -Force | Where-Object {
@@ -59,7 +62,8 @@ Get-ChildItem -LiteralPath $ProjectStage -Recurse -Directory | Where-Object {
   Remove-Item -LiteralPath $_.FullName -Recurse -Force
 }
 Compress-Archive -Path $ProjectStage -DestinationPath $ProjectZip -CompressionLevel Optimal -Force
+}
 Remove-Item -LiteralPath $StagingRoot -Recurse -Force
 
 Write-Host "Created $InstallerZip"
-Write-Host "Created $ProjectZip"
+if (-not $InstallerOnly) { Write-Host "Created $ProjectZip" }

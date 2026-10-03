@@ -1,3 +1,7 @@
+2.5.6
+
+Fixed Soundbite download validation and interrupted saves. Fixed unused Soundbite and background cleanup while preserving shared, local and active files.
+
 2.5.5
 
 Fixed Xbox game detection and foreground handoff during loading.

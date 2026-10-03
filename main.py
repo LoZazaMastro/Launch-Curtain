@@ -16,6 +16,7 @@ import time
 import shutil
 import unicodedata
 import uuid
+import importlib.util
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from ctypes import wintypes
 from urllib.parse import parse_qs, quote, unquote, urlencode, urljoin, urlparse
@@ -23,6 +24,10 @@ from urllib.request import Request, urlopen
 from typing import Any, Dict, List, Optional, Tuple
 
 import decky
+
+_asset_spec = importlib.util.spec_from_file_location("launch_curtain_managed_assets", os.path.join(os.path.dirname(__file__), "managed_assets.py"))
+_managed_assets = importlib.util.module_from_spec(_asset_spec)
+_asset_spec.loader.exec_module(_managed_assets)
 
 
 PLAYHUB_YELLOW = "#FCCC01"
@@ -3676,8 +3681,7 @@ def _download_image_sync(image_url: str, app_id: int, title: str, resolution: st
         f"{uuid.uuid4().hex[:8]}{extension}"
     )
     destination = os.path.join(_launch_images_dir(), filename)
-    with open(destination, "wb") as file:
-        file.write(data)
+    _managed_assets.atomic_write(destination, data)
     return destination
 
 
@@ -4279,13 +4283,15 @@ def _iidb_is_probable_media_url(url: str, kind: str, context: str = "", category
         return False
     try:
         parsed = urlparse(absolute)
-        host = parsed.netloc.lower().split(":", 1)[0]
+        host = (parsed.hostname or "").lower()
+        if parsed.username or parsed.password or parsed.port not in (None, 443) or parsed.scheme != "https":
+            return False
         path = unquote(parsed.path).lower()
     except Exception:
         return False
     if host != "assets.iisu.network":
         return False
-    match = re.search(r"/games/(\d+)/(soundbite|banner|hero)/([^/?#]+)", path, re.IGNORECASE)
+    match = re.fullmatch(r"/games/(\d+)/(soundbite|banner|hero)/([^/?#]+)", path, re.IGNORECASE)
     if not match:
         return False
     family = match.group(2).lower()
@@ -5594,9 +5600,8 @@ def _search_iidb_assets_sync(title: str, kind: str, enrich_metadata: bool = True
 def _download_soundbite_sync(audio_url: str, app_id: int, title: str) -> str:
     if not _iidb_is_probable_media_url(str(audio_url or ""), "soundbite"):
         raise RuntimeError("Refusing a non-iiDB game Soundbite URL")
-    parsed = urlparse(str(audio_url or ""))
-    url_ext = os.path.splitext(parsed.path)[1].lower()
     folder = os.path.join(_soundbites_dir(), str(app_id))
+    _managed_assets.guarded(folder)
     os.makedirs(folder, exist_ok=True)
     digest = hashlib.sha1(str(audio_url).encode("utf-8", "ignore")).hexdigest()[:12]
     request = Request(
@@ -5611,28 +5616,28 @@ def _download_soundbite_sync(audio_url: str, app_id: int, title: str) -> str:
         content_type = str(response.headers.get("Content-Type", "") or "").split(";", 1)[0].strip().lower()
         if content_type and "text/html" in content_type:
             raise RuntimeError("iiDB returned an HTML page instead of an audio file")
-        data = response.read(30 * 1024 * 1024 + 1)
+        if not _iidb_is_probable_media_url(response.geturl(), "soundbite"):
+            raise RuntimeError("iiDB redirected to a non-game audio URL")
+        maximum = 30 * 1024 * 1024
+        chunks, total = [], 0
+        deadline = time.monotonic() + 60
+        while True:
+            if time.monotonic() > deadline:
+                raise TimeoutError("iiDB audio download timed out")
+            chunk = response.read(min(65536, maximum + 1 - total))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > maximum:
+                raise RuntimeError("Invalid or oversized iiDB soundbite")
+            chunks.append(chunk)
+        data = b"".join(chunks)
     if not data or len(data) > 30 * 1024 * 1024:
         raise RuntimeError("Invalid or oversized iiDB soundbite")
 
-    content_type_extensions = {
-        "audio/mpeg": ".mp3",
-        "audio/mp3": ".mp3",
-        "audio/wav": ".wav",
-        "audio/x-wav": ".wav",
-        "audio/ogg": ".ogg",
-        "application/ogg": ".ogg",
-        "audio/mp4": ".m4a",
-        "audio/x-m4a": ".m4a",
-        "audio/aac": ".aac",
-        "audio/flac": ".flac",
-        "audio/x-flac": ".flac",
-        "audio/webm": ".webm",
-    }
-    ext = content_type_extensions.get(content_type) or (url_ext if url_ext in IIDB_AUDIO_EXTENSIONS else ".mp3")
+    ext = _managed_assets.audio_extension(data)
     destination = os.path.join(folder, f"iidb-{digest}{ext}")
-    with open(destination, "wb") as file:
-        file.write(data)
+    _managed_assets.atomic_write(destination, data)
     return destination
 
 
@@ -5647,54 +5652,6 @@ def _soundbite_reference_paths(settings: Dict[str, Any]) -> set[str]:
                     paths.add(os.path.normcase(os.path.abspath(path)))
     return paths
 
-
-def _cleanup_unused_soundbites_sync(settings: Dict[str, Any]) -> Dict[str, Any]:
-    """Delete only orphaned files inside Launch Curtain's managed iiDB Soundbite root."""
-    root = _soundbites_dir()
-    used_paths = _soundbite_reference_paths(settings)
-    removed: List[str] = []
-    kept = 0
-    failed: List[str] = []
-    if not os.path.isdir(root):
-        return {"ok": True, "removed": 0, "kept": 0, "failed": [], "message": "Soundbites folder does not exist yet."}
-
-    root_abs = os.path.normcase(os.path.abspath(root))
-    for dirpath, _dirnames, filenames in os.walk(root, topdown=False):
-        for name in filenames:
-            path = os.path.join(dirpath, name)
-            normalized = os.path.normcase(os.path.abspath(path))
-            try:
-                if os.path.commonpath([root_abs, normalized]) != root_abs:
-                    kept += 1
-                    continue
-            except Exception:
-                kept += 1
-                continue
-            if normalized in used_paths:
-                kept += 1
-                continue
-            # Only files explicitly created by the iiDB downloader are eligible.
-            # Even if a user manually places/selects a local file inside this
-            # directory, never delete it unless it carries Launch Curtain's
-            # managed iidb- filename prefix.
-            if not name.lower().startswith("iidb-"):
-                kept += 1
-                continue
-            try:
-                os.remove(path)
-                removed.append(path)
-            except Exception as error:
-                failed.append(f"{path}: {error}")
-        if os.path.normcase(os.path.abspath(dirpath)) != root_abs:
-            try:
-                if not os.listdir(dirpath):
-                    os.rmdir(dirpath)
-            except Exception:
-                pass
-    message = f"Removed {len(removed)} unused managed Soundbite file(s)."
-    if failed:
-        message += f" {len(failed)} file(s) could not be removed."
-    return {"ok": not failed, "removed": len(removed), "kept": kept, "failed": failed, "message": message}
 
 
 def _launch_image_reference_paths(settings: Dict[str, Any]) -> set[str]:
@@ -5713,37 +5670,6 @@ def _launch_image_reference_paths(settings: Dict[str, Any]) -> set[str]:
                 add(value.get("fullscreen_image_path"))
     return references
 
-
-def _cleanup_unused_launch_images_sync(settings: Dict[str, Any]) -> Dict[str, Any]:
-    images_dir = _launch_images_dir()
-    used_paths = _launch_image_reference_paths(settings)
-    removed: List[str] = []
-    kept = 0
-    failed: List[str] = []
-    if not os.path.isdir(images_dir):
-        return {"ok": True, "removed": 0, "kept": 0, "failed": [], "message": "Launch images folder does not exist yet."}
-
-    for name in os.listdir(images_dir):
-        path = os.path.join(images_dir, name)
-        if not os.path.isfile(path):
-            continue
-        extension = os.path.splitext(name)[1].lower()
-        if extension not in PREVIEW_IMAGE_EXTENSIONS:
-            kept += 1
-            continue
-        normalized = os.path.normcase(os.path.abspath(path))
-        if normalized in used_paths:
-            kept += 1
-            continue
-        try:
-            os.remove(path)
-            removed.append(path)
-        except Exception as error:
-            failed.append(f"{path}: {error}")
-    message = f"Removed {len(removed)} unused launch image(s)."
-    if failed:
-        message += f" {len(failed)} file(s) could not be removed."
-    return {"ok": not failed, "removed": len(removed), "kept": kept, "failed": failed, "message": message}
 
 
 def _is_windows() -> bool:
@@ -7249,8 +7175,7 @@ class Plugin:
         return cache_entry
 
     def _save_settings_to_disk(self) -> None:
-        with open(_settings_path(), "w", encoding="utf-8") as file:
-            json.dump(self.settings, file, indent=2)
+        _managed_assets.atomic_write(_settings_path(), json.dumps(self.settings, indent=2).encode("utf-8"))
         _log_info(
             "Settings saved "
             f"auto_mode={bool(self.settings.get('auto_mode'))} "
@@ -7594,7 +7519,8 @@ class Plugin:
 
     def _prepare_soundbite_for_launch(self, app_id: Optional[int], game_settings: Dict[str, Any]) -> None:
         """Validate and arm the Soundbite, but do not play it before the curtain is visible."""
-        path = os.path.normpath(str(game_settings.get("soundbite_path", "") or "").strip())
+        raw_path = str(game_settings.get("soundbite_path", "") or "").strip()
+        path = os.path.normpath(raw_path) if raw_path else ""
         self._stop_soundbite_player("new launch")
         self.current_launch_soundbite_path = ""
         self.current_launch_soundbite_source = ""
@@ -7765,8 +7691,12 @@ class Plugin:
             return system_powershell
         return shutil.which("powershell.exe") or "powershell.exe"
 
-    async def cleanup_unused_launch_images(self) -> Dict[str, Any]:
-        result = await asyncio.to_thread(_cleanup_unused_launch_images_sync, self.settings)
+    @_managed_assets.serialized
+    async def cleanup_unused_launch_images(self, request: Any = None) -> Dict[str, Any]:
+        result = await asyncio.to_thread(_managed_assets.cleanup, self.settings, _launch_images_dir(), "image",
+                                         _steam_root_candidates({-1: {}}), self._save_settings_to_disk,
+                                         [getattr(self, "current_launch_fullscreen_image_path", "")],
+                                         bool(isinstance(request, dict) and request.get("dry_run") is True))
         _log_info(
             "Unused launch image cleanup "
             f"removed={result.get('removed', 0)} "
@@ -7775,8 +7705,12 @@ class Plugin:
         )
         return result
 
-    async def cleanup_unused_soundbites(self) -> Dict[str, Any]:
-        result = await asyncio.to_thread(_cleanup_unused_soundbites_sync, self.settings)
+    @_managed_assets.serialized
+    async def cleanup_unused_soundbites(self, request: Any = None) -> Dict[str, Any]:
+        result = await asyncio.to_thread(_managed_assets.cleanup, self.settings, _soundbites_dir(), "soundbite",
+                                         _steam_root_candidates({-1: {}}), self._save_settings_to_disk,
+                                         [getattr(self, "current_launch_soundbite_path", "")],
+                                         bool(isinstance(request, dict) and request.get("dry_run") is True))
         _log_info(
             "Unused managed Soundbite cleanup "
             f"removed={result.get('removed', 0)} "
@@ -7785,6 +7719,7 @@ class Plugin:
         )
         return result
 
+    @_managed_assets.serialized
     async def create_backup(self, request: Any) -> Dict[str, Any]:
         folder = str(request.get("folder", "") if isinstance(request, dict) else request or "").strip()
         if not folder:
@@ -7806,6 +7741,7 @@ class Plugin:
             _log_warning(f"Backup creation failed folder={folder}: {error}")
             return {"ok": False, "message": f"Could not create backup: {error}"}
 
+    @_managed_assets.serialized
     async def restore_backup(self, request: Any) -> Dict[str, Any]:
         folder = str(request.get("folder", "") if isinstance(request, dict) else request or "").strip()
         if not folder:
@@ -7855,6 +7791,7 @@ class Plugin:
         settings["default_logo_path"] = self._default_logo_path()
         return settings
 
+    @_managed_assets.serialized
     async def save_settings(self, settings: Dict[str, Any]) -> Dict[str, Any]:
         for key in DEFAULT_SETTINGS:
             if key in settings:
@@ -8028,6 +7965,7 @@ class Plugin:
             _log_warning(f"PlayStation background lookup failed title={title} product={product_url}: {error}")
             return {"ok": False, "message": f"Could not read the selected PlayStation Store page: {error}", "results": []}
 
+    @_managed_assets.serialized
     async def apply_playstation_asset(self, request: Any) -> Dict[str, Any]:
         if not isinstance(request, dict):
             return {"ok": False, "message": "Invalid PlayStation asset request."}
@@ -8084,6 +8022,7 @@ class Plugin:
             _log_warning(f"PlayStation bulk failed app_id={app_id} title={title}: {error}")
             return {"ok": False, "app_id": app_id, "title": title, "message": f"PlayStation asset failed: {error}"}
 
+    @_managed_assets.serialized
     async def remove_playstation_asset(self, request: Any) -> Dict[str, Any]:
         app_id = _normalize_app_id(request.get("app_id") if isinstance(request, dict) else request)
         if app_id is None:
@@ -8249,6 +8188,7 @@ class Plugin:
             )
         }
 
+    @_managed_assets.serialized
     async def download_google_image(self, request: Any) -> Dict[str, Any]:
         if not isinstance(request, dict):
             return {"ok": False, "message": "Invalid request."}
@@ -8273,23 +8213,14 @@ class Plugin:
                 per_game = {}
                 self.settings["per_game"] = per_game
             current = dict(per_game.get(str(app_id), {}) if isinstance(per_game.get(str(app_id)), dict) else {})
-            old_path = str(current.get("fullscreen_image_path", "") or "")
-            old_iidb_managed = bool(current.get("iidb_asset_managed", False))
             current["fullscreen_image_path"] = path
+            current["launch_image_managed"] = True
             current.pop("playstation_asset_managed", None)
             if source.lower().startswith("iidb"):
                 current["iidb_asset_managed"] = True
             else:
                 current.pop("iidb_asset_managed", None)
             per_game[str(app_id)] = current
-            if old_iidb_managed and old_path and os.path.normcase(os.path.abspath(old_path)) != os.path.normcase(os.path.abspath(path)):
-                try:
-                    image_root = os.path.normcase(os.path.abspath(_launch_images_dir()))
-                    old_abs = os.path.normcase(os.path.abspath(old_path))
-                    if os.path.commonpath([image_root, old_abs]) == image_root and os.path.isfile(old_path):
-                        os.remove(old_path)
-                except Exception as cleanup_error:
-                    _log_warning(f"Could not delete replaced iiDB asset app_id={app_id}: {cleanup_error}")
             self._save_settings_to_disk()
             _log_info(
                 "Google image downloaded "
@@ -8347,22 +8278,19 @@ class Plugin:
             return {"ok": False, "url": "", "message": f"Could not preview Soundbite: {error}"}
 
     def _delete_managed_soundbite_file(self, path: str, app_id: int) -> bool:
+        if not path or not _managed_assets.managed(path, _soundbites_dir(), "soundbite"):
+            return False
+        target = os.path.normcase(os.path.abspath(path))
+        if target in _soundbite_reference_paths(self.settings) or target == os.path.normcase(os.path.abspath(getattr(self, "current_launch_soundbite_path", "") or "")):
+            return False
         try:
-            root = os.path.normcase(os.path.abspath(_soundbites_dir()))
-            target = os.path.normcase(os.path.abspath(path))
-            if os.path.commonpath([root, target]) == root and os.path.isfile(path):
-                os.remove(path)
-                parent = os.path.dirname(path)
-                try:
-                    if parent and os.path.isdir(parent) and not os.listdir(parent):
-                        os.rmdir(parent)
-                except Exception:
-                    pass
-                return True
-        except Exception as error:
-            _log_warning(f"Could not delete managed Soundbite app_id={app_id} path={path}: {error}")
-        return False
+            os.remove(path)
+            return True
+        except OSError as error:
+            _log_warning(f"Could not delete managed Soundbite app_id={app_id}: {error}")
+            return False
 
+    @_managed_assets.serialized
     async def import_local_soundbite(self, request: Any) -> Dict[str, Any]:
         if not isinstance(request, dict):
             return {"ok": False, "message": "Invalid Soundbite request."}
@@ -8390,6 +8318,7 @@ class Plugin:
         result.update({"ok": True, "message": "Local Soundbite imported."})
         return result
 
+    @_managed_assets.serialized
     async def download_iidb_soundbite(self, request: Any) -> Dict[str, Any]:
         if not isinstance(request, dict):
             return {"ok": False, "message": "Invalid iiDB Soundbite request."}
@@ -8405,7 +8334,8 @@ class Plugin:
             if not isinstance(per_game, dict):
                 per_game = {}
                 self.settings["per_game"] = per_game
-            current = dict(per_game.get(str(app_id), {}) if isinstance(per_game.get(str(app_id)), dict) else {})
+            previous = per_game.get(str(app_id))
+            current = dict(previous if isinstance(previous, dict) else {})
             old_path = str(current.get("soundbite_path", "") or "")
             old_managed = bool(current.get("iidb_soundbite_managed", False))
             current["soundbite_path"] = path
@@ -8421,7 +8351,14 @@ class Plugin:
                 current["iidb_game_title"] = title[:180]
             current.setdefault("soundbite_volume", 100)
             per_game[str(app_id)] = current
-            self._save_settings_to_disk()
+            try:
+                self._save_settings_to_disk()
+            except Exception:
+                if previous is None:
+                    per_game.pop(str(app_id), None)
+                else:
+                    per_game[str(app_id)] = previous
+                raise
             if old_managed and old_path and os.path.normcase(os.path.abspath(old_path)) != os.path.normcase(os.path.abspath(path)):
                 self._delete_managed_soundbite_file(old_path, app_id)
             result = await self.get_game_settings(app_id)
@@ -8431,6 +8368,7 @@ class Plugin:
             _log_warning(f"iiDB Soundbite download failed app_id={app_id} url={audio_url}: {error}")
             return {"ok": False, "message": f"Could not download iiDB Soundbite: {error}"}
 
+    @_managed_assets.serialized
     async def clear_soundbite(self, request: Any) -> Dict[str, Any]:
         app_id = _normalize_app_id(request.get("app_id") if isinstance(request, dict) else request)
         if app_id is None:
@@ -8450,6 +8388,7 @@ class Plugin:
         deleted = self._delete_managed_soundbite_file(path, app_id) if managed and path else False
         return {"ok": True, "removed": bool(path), "deleted": deleted, "local_preserved": bool(path and not managed), "message": "Soundbite assignment removed."}
 
+    @_managed_assets.serialized
     async def remove_iidb_soundbite(self, request: Any) -> Dict[str, Any]:
         app_id = _normalize_app_id(request.get("app_id") if isinstance(request, dict) else request)
         if app_id is None:
@@ -8488,6 +8427,7 @@ class Plugin:
                 return value
         return None
 
+    @_managed_assets.serialized
     async def _search_iidb_for_game(self, app_id: int, title: str, kind: str, *, enrich_metadata: bool = True) -> Dict[str, Any]:
         cached_id = self._cached_iidb_game_id(app_id, title)
         if cached_id:
@@ -8514,6 +8454,7 @@ class Plugin:
             _log_info(f"iiDB cached game-id stored app_id={app_id} title={title} game_id={resolved_id} kind={kind}")
         return search
 
+    @_managed_assets.serialized
     async def apply_iidb_soundbite(self, request: Any) -> Dict[str, Any]:
         if not isinstance(request, dict):
             return {"ok": False, "message": "Invalid iiDB Soundbite request."}
@@ -8522,7 +8463,8 @@ class Plugin:
         if app_id is None or not title:
             return {"ok": False, "message": "Missing game id or title."}
         raw = self._raw_game_settings(app_id)
-        if str(raw.get("soundbite_path", "") or "").strip():
+        existing = str(raw.get("soundbite_path", "") or "").strip()
+        if existing and (not raw.get("iidb_soundbite_managed") or os.path.isfile(existing)):
             return {"ok": True, "skipped": True, "message": "Existing Soundbite preserved."}
         excluded = set(self.settings.get("soundbite_auto_assign_excluded_app_ids", []) or [])
         if app_id in excluded:
@@ -8545,6 +8487,7 @@ class Plugin:
             "iidb_game_id": resolved_iidb_id or selected.get("iidb_game_id", 0),
         })
 
+    @_managed_assets.serialized
     async def apply_iidb_asset(self, request: Any) -> Dict[str, Any]:
         if not isinstance(request, dict):
             return {"ok": False, "message": "Invalid iiDB Asset request."}
@@ -8585,6 +8528,7 @@ class Plugin:
         except Exception as error:
             return {"ok": False, "message": f"Could not apply iiDB Asset: {error}"}
 
+    @_managed_assets.serialized
     async def remove_iidb_asset(self, request: Any) -> Dict[str, Any]:
         app_id = _normalize_app_id(request.get("app_id") if isinstance(request, dict) else request)
         if app_id is None:
@@ -8622,6 +8566,7 @@ class Plugin:
         return {"ok": True, "removed": bool(path), "deleted": deleted, "message": "iiDB Asset removed."}
 
 
+    @_managed_assets.serialized
     async def save_game_settings(self, request: Dict[str, Any]) -> Dict[str, Any]:
         app_id = _normalize_app_id(request.get("app_id") if isinstance(request, dict) else None)
         if app_id is None:
@@ -8672,10 +8617,12 @@ class Plugin:
                     # A manually selected local image is user-owned from this point on.
                     current.pop("playstation_asset_managed", None)
                     current.pop("iidb_asset_managed", None)
+                    current.pop("launch_image_managed", None)
             else:
                 current.pop("fullscreen_image_path", None)
                 current.pop("playstation_asset_managed", None)
                 current.pop("iidb_asset_managed", None)
+                current.pop("launch_image_managed", None)
 
         if "background_opacity" in values:
             background_opacity = self._coerce_optional_int(values.get("background_opacity"), 0, 100)
@@ -8766,6 +8713,7 @@ class Plugin:
         self._save_settings_to_disk()
         return await self.get_game_settings(app_id)
 
+    @_managed_assets.serialized
     async def reset_game_settings(self, request: Any) -> Dict[str, Any]:
         app_id = _normalize_app_id(request.get("app_id") if isinstance(request, dict) else request)
         if app_id is None:
