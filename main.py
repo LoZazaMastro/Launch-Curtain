@@ -242,6 +242,12 @@ IGNORED_LAUNCH_CHILDREN = {
 # setup, launcher, or anti-cheat surfaces rather than the game render surface. Keep
 # following their children without ever selecting the helper itself for hand-off.
 TRANSIENT_LAUNCH_PROCESS_EXACT = {
+    "gamingservicesui.exe",
+    "gamingservices.exe",
+    "gamingservicesnet.exe",
+    "gamelaunchhelper.exe",
+    "playhub.gamesession.exe",
+    "playhub.xboxsession.exe",
     "easyanticheat.exe",
     "easyanticheat_eos.exe",
     "easyanticheat_eos_setup.exe",
@@ -270,6 +276,59 @@ def _is_transient_launch_process(process_name: str) -> bool:
         name in TRANSIENT_LAUNCH_PROCESS_EXACT
         or any(hint in name for hint in TRANSIENT_LAUNCH_PROCESS_HINTS)
     )
+
+
+def _query_verified_uwp_session(app_id: int) -> List[Dict[str, Any]]:
+    """Only the current user's authenticated native verifier can admit COM games."""
+    if not _is_windows() or not app_id:
+        return []
+    try:
+        directory = os.path.join(os.environ.get("APPDATA", ""), "GamingMode")
+        with open(os.path.join(directory, "xbox-shell-token"), "r", encoding="utf-8") as handle:
+            token = handle.read(129).strip()
+        if not re.fullmatch(r"[0-9A-Fa-f]{64}", token):
+            return []
+        with open(os.path.join(directory, "config.json"), "r", encoding="utf-8-sig") as handle:
+            config = json.load(handle)
+        port = int(config.get("safety", {}).get("apiPort", 47991))
+        if not 0 < port < 65536:
+            return []
+        request = Request(f"http://127.0.0.1:{port}/session/uwp?appId={int(app_id)}",
+                          headers={"X-Playhub-Shell-Token": token})
+        # Never proxy the local authorization header or wait unbounded on an optional agent.
+        from urllib.request import build_opener, ProxyHandler
+        with build_opener(ProxyHandler({})).open(request, timeout=0.6) as response:
+            payload = response.read(65537)
+        if len(payload) > 65536:
+            return []
+        result = json.loads(payload)
+        if not isinstance(result, dict) or int(result.get("appId", 0)) != app_id:
+            return []
+        sessions = result.get("sessions", [])
+        return sessions[:4] if isinstance(sessions, list) else []
+    except (OSError, ValueError, TypeError, KeyError):
+        # 404, missing optional native, stale token and timeout preserve ordinary tree detection.
+        return []
+
+
+def _verified_uwp_candidate(session: Dict[str, Any], processes: Dict[int, Dict[str, Any]]) -> Optional[int]:
+    if not isinstance(session, dict):
+        return None
+    try:
+        pid = int(session["gamePid"])
+        birth = int(session["gameBirth"])
+        executable = str(session["executable"]).replace("\\", "/").split("/")[-1].lower()
+        if pid <= 0 or birth <= 0 or not session.get("packageFamily") or not session.get("aumid"):
+            return None
+        if str(processes.get(pid, {}).get("process", "")).lower() != executable or _is_transient_launch_process(executable):
+            return None
+        started = _process_started_at(pid)
+        # Revalidate local lifetime after HTTP returned. A recycled PID must not inherit a reply.
+        if started <= 0 or abs(started - (birth / 10000000 - 11644473600)) > .05:
+            return None
+        return pid
+    except (ValueError, TypeError, KeyError):
+        return None
 
 
 def _modern_handoff_settle_seconds(process_name: str, configured_seconds: float) -> float:
@@ -9387,6 +9446,30 @@ class Plugin:
         _log_info(f"Starting curtain after detected launch process={process_name} pid={pid}")
         await self.show_curtain(timeout_override=0)
 
+    async def _poll_verified_uwp_launch(self, processes: Dict[int, Dict[str, Any]]) -> None:
+        now = time.time()
+        app_id = int(self.current_launch_app_id or 0)
+        if not app_id or now >= self.launch_pending_until or now - getattr(self, "last_uwp_identity_poll", 0.0) < 1.0:
+            return
+        self.last_uwp_identity_poll = now
+        sessions = await asyncio.to_thread(_query_verified_uwp_session, app_id)
+        if self.current_launch_app_id != app_id or time.time() >= self.launch_pending_until:
+            return
+        for session in sessions:
+            pid = _verified_uwp_candidate(session, processes)
+            if pid is None:
+                continue
+            windows = [dict(w) for w in session.get("windows", [])[:8]
+                       if isinstance(w, dict) and int(w.get("pid", 0)) == pid and int(w.get("hwnd", 0)) > 0]
+            candidate = self.launch_game_candidates.setdefault(pid, {"first_seen": now})
+            candidate["verified_uwp_windows"] = windows
+            candidate["verified_uwp_birth"] = session["gameBirth"]
+            candidate["verified_uwp_identity"] = session
+            self.active_game_pids.setdefault(pid, now)
+            if not self.launch_process_seen:
+                _log_info(f"Verified COM Xbox game app_id={app_id} pid={pid}")
+                await self._start_curtain_for_detected_launch(str(processes[pid]["process"]), pid)
+
     async def _monitor_process_launches(
         self,
         processes: Dict[int, Dict[str, Any]],
@@ -9510,7 +9593,10 @@ class Plugin:
             if now - first_seen < 0.4:
                 continue
 
+            if "verified_uwp_identity" in data and _verified_uwp_candidate(data["verified_uwp_identity"], processes) != pid:
+                continue
             candidate_windows = _windows_for_pid(pid, limit=8)
+            candidate_windows.extend(int(w["hwnd"]) for w in data.get("verified_uwp_windows", []) if int(w["hwnd"]) not in candidate_windows)
             if candidate_windows and pid not in self.launch_candidate_focus_attempted and now - first_seen >= 0.65:
                 target_hwnd = max(candidate_windows, key=lambda hwnd: _window_area(hwnd))
                 focused = _focus_window(target_hwnd)
@@ -9869,6 +9955,11 @@ class Plugin:
         process_ready_delay = max(8.0, near_ready_delay + 2.0)
         try:
             visible_windows_snapshot = _visible_windows(limit=180)
+            for pid, candidate in self.launch_game_candidates.items():
+                if "verified_uwp_identity" in candidate and _verified_uwp_candidate(candidate["verified_uwp_identity"], processes) == pid:
+                    known = {int(w.get("hwnd", 0)) for w in visible_windows_snapshot}
+                    visible_windows_snapshot.extend(w for w in candidate.get("verified_uwp_windows", [])
+                        if int(w.get("hwnd", 0)) not in known)
             for window in visible_windows_snapshot:
                 pid = int(window.get("pid", 0) or 0)
                 if pid not in candidate_pids:
@@ -10213,6 +10304,7 @@ class Plugin:
                     self._cleanup_stale_black_cover_helpers()
                     self._start_black_cover()
 
+                await self._poll_verified_uwp_launch(processes)
                 await self._monitor_process_launches(processes, launcher_names)
                 if _modern and await self._release_unconfirmed_modern_launch():
                     continue

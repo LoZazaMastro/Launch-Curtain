@@ -1,3 +1,7 @@
+2.5.5
+
+Fixed Xbox game detection and foreground handoff during loading.
+
 2.5.4
 
 Fixed the loading screen staying visible when a controller press does not start a game. Unconfirmed attempts close within three seconds. Confirmed launches keep their normal loading screen, including games that start slowly.
