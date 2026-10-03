@@ -11,7 +11,8 @@ SOURCE = Path(__file__).parents[1] / "main.py"
 class IdleMonitorTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         names = {"__init__", "_ensure_monitor", "_monitor_has_work", "_monitor_exit_tracking_only", "_monitor_foreground",
-                 "_is_curtain_running", "get_status", "_monitor_process_launches", "_restore_steam_focus_after_game_exit"}
+                 "_is_curtain_running", "get_status", "_monitor_process_launches", "_restore_steam_focus_after_game_exit",
+                 "_release_unconfirmed_modern_launch", "launch_requested"}
         tree = ast.parse(SOURCE.read_text(encoding="utf-8-sig"))
         methods = [node for cls in tree.body if isinstance(cls, ast.ClassDef) and cls.name == "Plugin"
                    for node in cls.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names]
@@ -28,6 +29,7 @@ class IdleMonitorTests(unittest.IsolatedAsyncioTestCase):
         scope = {"asyncio": asyncio, "time": SimpleNamespace(time=lambda: self.now),
                  "sys": SimpleNamespace(platform="win32"), "DEFAULT_SETTINGS": {"auto_mode": True, "launcher_processes": []},
                  "_log_info": lambda text: None, "_log_warning": lambda text: self.fail(text),
+                 "MODERN_SPECULATIVE_SECONDS": 2.5, "_normalize_app_id": lambda value: int(value) if value else None,
                  "_process_snapshot": snapshot, "_foreground_window": window,
                  "_visible_windows": lambda limit: [window()], "_is_windows": lambda: True,
                  "STEAM_PROCESS_NAMES": {"steam.exe"}, "IGNORED_LAUNCH_CHILDREN": set(),
@@ -162,6 +164,47 @@ class IdleMonitorTests(unittest.IsolatedAsyncioTestCase):
             setattr(self.backend, key, value)
             self.assertFalse(self.backend._monitor_exit_tracking_only(), key)
             setattr(self.backend, key, previous)
+
+    async def test_unconfirmed_prediction_releases_within_three_seconds(self):
+        self.backend.modern_active = True
+        self.backend.launch_request_started_at = self.now
+        closes = []
+        async def close():
+            closes.append(self.now)
+            self.backend.modern_active = False
+        self.backend.hide_curtain = close
+        self.now += 2.49
+        self.assertFalse(await self.backend._release_unconfirmed_modern_launch())
+        self.now += .02
+        self.assertTrue(await self.backend._release_unconfirmed_modern_launch())
+        self.assertEqual(len(closes), 1)
+        self.assertFalse(await self.backend._release_unconfirmed_modern_launch())
+
+    async def test_confirmed_slow_launch_and_real_evidence_keep_cover(self):
+        self.backend.modern_active = True
+        self.backend.launch_request_started_at = self.now - 30
+        async def close():
+            self.fail("Real launch must not use speculative expiry")
+        self.backend.hide_curtain = close
+        for key, value in [("launch_request_confirmed", True), ("launch_action_started_at", self.now - 20),
+                           ("launch_process_seen", True), ("launch_game_candidates", {7: {}}), ("native_prompt_visible", True)]:
+            previous = getattr(self.backend, key)
+            setattr(self.backend, key, value)
+            self.assertFalse(await self.backend._release_unconfirmed_modern_launch(), key)
+            self.assertTrue((await self.backend.get_status())["modern_launch_confirmed"], key)
+            setattr(self.backend, key, previous)
+
+    async def test_duplicate_confirmed_request_promotes_speculative_launch(self):
+        self.backend.current_launch_app_id = 123
+        self.backend.modern_active = True
+        self.backend.launch_request_started_at = self.now - .5
+        self.backend._launch_response = lambda message: {"ok": True, "message": message}
+        result = await self.backend.launch_requested({"app_id": 123, "reason": "SteamClient.Apps.RunGame", "confirmed_launch": True})
+        self.assertTrue(result["ok"])
+        self.assertTrue(self.backend.launch_request_confirmed)
+        self.assertEqual(self.backend.launch_request_started_at, self.now - .5)
+        self.now += 30
+        self.assertFalse(await self.backend._release_unconfirmed_modern_launch())
 
 
 if __name__ == "__main__":

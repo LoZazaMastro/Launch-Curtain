@@ -674,6 +674,7 @@ const POST_PLAY_CANCEL_PATTERN = /^(?:cancel|back|close|dismiss|annulla|indietro
 
 const POST_PLAY_PROMPT_HOLD_MS = 5 * 60 * 1000;
 const MODERN_FAIL_OPEN_MS = 75 * 1000;
+const MODERN_SPECULATIVE_MS = 2500;
 
 // Hook del pulsante Play + instant curtain (DOM in-CEF). Ricostruito dal dist.
 class PlayButtonLaunchHook {
@@ -695,6 +696,8 @@ class PlayButtonLaunchHook {
         this.instantCurtainSafetyTimer = undefined;
         this.instantCurtainVisible = false;
         this.modernFadeToBlackActive = false;
+        this.modernSpeculationTimer = undefined;
+        this.modernLaunchConfirmed = false;
         this.backendLaunchToken = 0;
         this.prearmLogoToken = 0;
         this.gamepadClosePressed = false;
@@ -1572,6 +1575,7 @@ class PlayButtonLaunchHook {
             return;
         }
         this.lastTriggerAt = now;
+        this.armModernSpeculation(confirmedLaunch);
         this.postPlayCoverUntil = now + POST_PLAY_ARM_MS;
         this.postPlayCoverReadyAt = now + Math.min(1100, PROBATION_COVER_MS);
         this.startPromptWatch();
@@ -2630,12 +2634,33 @@ class PlayButtonLaunchHook {
             catch (_error) {}
         }
     }
+    armModernSpeculation(confirmedLaunch) {
+        if (!this.isModernMode()) return;
+        if (confirmedLaunch) {
+            this.modernLaunchConfirmed = true;
+            if (this.modernSpeculationTimer !== undefined) window.clearTimeout(this.modernSpeculationTimer);
+            this.modernSpeculationTimer = undefined;
+            return;
+        }
+        if (this.modernLaunchConfirmed || this.modernSpeculationTimer !== undefined) return;
+        this.modernSpeculationTimer = window.setTimeout(() => {
+            this.modernSpeculationTimer = undefined;
+            if (!this.instantCurtainVisible || this.modernLaunchConfirmed) return;
+            this.dbg("speculative cover released: Steam launch was not confirmed");
+            this.requestCloseAllCurtains();
+        }, MODERN_SPECULATIVE_MS);
+    }
     startModernHandoffPoll() {
         this.stopModernHandoffPoll();
         this.modernHandoffArmed = false;
         const poll = () => {
             void getStatus().then((st) => {
                 if (!this.instantCurtainVisible) { this.modernHandoffTimer = undefined; return; }
+                if (st?.modern_launch_confirmed === true
+                    && Number(st.modern_launch_app_id) === Number(this.activeInstantAppId)
+                    && Number(st.modern_launch_started_at) * 1000 >= this.lastTriggerAt - 1000) {
+                    this.modernLaunchConfirmed = true;
+                }
                 this.syncModernCurtainSurfaces();
                 if (st && st.modern_curtain_show === true) this.modernHandoffArmed = true;
                 if (this.modernHandoffArmed && st && st.modern_curtain_fade_to_black === true) {
@@ -2771,6 +2796,9 @@ class PlayButtonLaunchHook {
         this.setInstantCurtainLogo("", false);
     }
     hideInstantCurtain(clearArtworkImmediately = false) {
+        if (this.modernSpeculationTimer !== undefined) window.clearTimeout(this.modernSpeculationTimer);
+        this.modernSpeculationTimer = undefined;
+        this.modernLaunchConfirmed = false;
         // In Classic mode this DOM surface is only the short handoff into the WPF
         // curtain. Do not stop browser audio when that bridge disappears. Modern
         // uses the DOM curtain itself, so hiding it really ends the curtain.

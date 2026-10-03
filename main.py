@@ -27,6 +27,7 @@ import decky
 
 PLAYHUB_YELLOW = "#FCCC01"
 MODERN_FAIL_OPEN_SECONDS = 75.0
+MODERN_SPECULATIVE_SECONDS = 2.5
 MODERN_FADE_TO_BLACK_SECONDS = 0.62
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
@@ -6739,6 +6740,7 @@ class Plugin:
         self.launch_black_bridge_until = 0.0
         self.launch_black_bridge_release_at = 0.0
         self.launch_process_seen = False
+        self.launch_request_confirmed = False
         self.current_launch_app_id: Optional[int] = None
         self.current_launch_logo_path = ""
         self.current_launch_logo_source = ""
@@ -8775,6 +8777,9 @@ class Plugin:
             "auto_mode": bool(self.settings.get("auto_mode")),
             "curtain_mode": str(self.settings.get("curtain_mode", "modern")),
             "modern_curtain_show": bool(self.modern_active),
+            "modern_launch_confirmed": bool(self.launch_request_confirmed or self.launch_action_started_at > 0 or self.launch_process_seen or self.launch_game_candidates or self.native_prompt_visible),
+            "modern_launch_app_id": self.current_launch_app_id,
+            "modern_launch_started_at": self.launch_request_started_at,
             "modern_curtain_fade_to_black": bool(self.modern_active and self.modern_release_after > 0),
             "soundbite_playing": self._soundbite_is_playing(),
             "soundbite_path": self.current_launch_soundbite_path,
@@ -8994,6 +8999,8 @@ class Plugin:
             and (self.modern_active or self._is_curtain_running() or bool(self.current_launch_soundbite_path) or self._soundbite_is_playing())
         ):
             _log_info(f"launch_requested ignored: duplicate launch signal app_id={app_id}")
+            if confirmed_launch:
+                self.launch_request_confirmed = True
             return self._launch_response("Curtain already active for this launch.")
 
         game_settings = self._resolved_game_settings(app_id) if app_id else self._resolved_game_settings(None)
@@ -9019,6 +9026,8 @@ class Plugin:
             overlay_age = max(0.0, time.time() - self.last_curtain_started_at)
             same_app = bool(app_id and self.current_launch_app_id == app_id)
             if same_app and overlay_age < 1.5:
+                if confirmed_launch:
+                    self.launch_request_confirmed = True
                 _log_info(
                     "launch_requested ignored: duplicate request while curtain just started "
                     f"app_id={app_id} overlay_age={overlay_age:.2f}"
@@ -9048,6 +9057,7 @@ class Plugin:
             self.current_launch_timeout_seconds = int(self.settings.get("curtain_timeout", DEFAULT_SETTINGS["curtain_timeout"]))
             timeout_enabled = self.current_launch_timeout_enabled
         self.launch_request_started_at = time.time()
+        self.launch_request_confirmed = confirmed_launch
         self.launch_pending_until = self.launch_request_started_at + (pending_seconds if timeout_enabled else 3600)
         self.game_seen_since = 0.0
         self.current_launch_app_id = app_id
@@ -9202,6 +9212,7 @@ class Plugin:
         self.launch_black_bridge_until = 0.0
         self.launch_black_bridge_release_at = 0.0
         self.launch_process_seen = False
+        self.launch_request_confirmed = False
         self.current_launch_app_id = None
         self.current_launch_logo_path = ""
         self.current_launch_logo_source = ""
@@ -9566,6 +9577,25 @@ class Plugin:
             self.launch_game_candidates = {}
             self.launch_game_fullscreen_since = {}
             await self.hide_curtain()
+
+    async def _release_unconfirmed_modern_launch(self) -> bool:
+        # A raw A/button prediction is not a Steam launch. Release its cover
+        # quickly if Steam has not started an action, shown a prompt or created
+        # a launch child. Real, slow launches retain their existing watchdog.
+        if (
+            not self.modern_active
+            or self.launch_request_started_at <= 0
+            or self.launch_request_confirmed
+            or self.launch_action_started_at > 0
+            or self.launch_process_seen
+            or self.launch_game_candidates
+            or self.native_prompt_visible
+            or time.time() - self.launch_request_started_at < MODERN_SPECULATIVE_SECONDS
+        ):
+            return False
+        _log_info("Modern speculative cover released: Steam launch was not confirmed")
+        await self.hide_curtain()
+        return True
 
     async def _release_black_bridge_if_no_process(self) -> None:
         if self.launch_black_bridge_until <= 0:
@@ -10184,6 +10214,8 @@ class Plugin:
                     self._start_black_cover()
 
                 await self._monitor_process_launches(processes, launcher_names)
+                if _modern and await self._release_unconfirmed_modern_launch():
+                    continue
                 if not _modern:
                     if self.modern_hidden_launcher_windows or self.modern_steam_topmost_hwnd or self.modern_release_after > 0:
                         self._restore_modern_launcher_windows("curtain mode changed")
