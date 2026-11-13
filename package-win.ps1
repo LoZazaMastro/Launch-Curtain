@@ -36,8 +36,20 @@ foreach ($File in @("plugin.json", "main.py", "managed_assets.py", "package.json
   Copy-Item -LiteralPath (Join-Path $Root $File) -Destination $InstallerStage -Force
 }
 Copy-Item -LiteralPath (Join-Path $Root "dist/index.js") -Destination (Join-Path $InstallerStage "dist/index.js") -Force
+New-Item -ItemType Directory -Force -Path (Join-Path $InstallerStage "vendor") | Out-Null
+foreach ($File in @("difflib.py", "PYTHON-LICENSE.txt")) {
+  Copy-Item -LiteralPath (Join-Path $Root "vendor/$File") -Destination (Join-Path $InstallerStage "vendor/$File") -Force
+}
 Copy-Item -Path (Join-Path $Root "assets/*") -Destination (Join-Path $InstallerStage "assets") -Recurse -Force
-Copy-Item -Path (Join-Path $Root "helpers/*") -Destination (Join-Path $InstallerStage "helpers") -Recurse -Force
+$HelperRoot = [IO.Path]::GetFullPath((Join-Path $Root 'helpers')).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+Get-ChildItem -LiteralPath $HelperRoot -Recurse -File | Where-Object {
+  $_.Extension -notin @('.pyc', '.pyo') -and $_.FullName -notmatch '[\\/]__pycache__[\\/]'
+} | ForEach-Object {
+  $Relative = $_.FullName.Substring($HelperRoot.Length)
+  $Target = Join-Path (Join-Path $InstallerStage 'helpers') $Relative
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Target) | Out-Null
+  Copy-Item -LiteralPath $_.FullName -Destination $Target -Force
+}
 Compress-Archive -Path $InstallerStage -DestinationPath $InstallerZip -CompressionLevel Optimal -Force
 
 if (-not $InstallerOnly) {

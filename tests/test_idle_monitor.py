@@ -12,7 +12,7 @@ class IdleMonitorTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         names = {"__init__", "_ensure_monitor", "_monitor_has_work", "_monitor_exit_tracking_only", "_monitor_foreground",
                  "_is_curtain_running", "get_status", "_monitor_process_launches", "_restore_steam_focus_after_game_exit",
-                 "_release_unconfirmed_modern_launch", "launch_requested"}
+                 "_release_unconfirmed_modern_launch", "launch_requested", "_launch_process_is_current"}
         tree = ast.parse(SOURCE.read_text(encoding="utf-8-sig"))
         methods = [node for cls in tree.body if isinstance(cls, ast.ClassDef) and cls.name == "Plugin"
                    for node in cls.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in names]
@@ -33,7 +33,8 @@ class IdleMonitorTests(unittest.IsolatedAsyncioTestCase):
                  "_process_snapshot": snapshot, "_foreground_window": window,
                  "_visible_windows": lambda limit: [window()], "_is_windows": lambda: True,
                  "STEAM_PROCESS_NAMES": {"steam.exe"}, "IGNORED_LAUNCH_CHILDREN": set(),
-                 "_is_transient_launch_process": lambda name: False,
+                 "_is_transient_launch_process": lambda name: False, "os": __import__("os"),
+                 "_process_image_path": lambda pid: r"C:\Games\game.exe",
                  "_process_started_at": lambda pid: {2: self.now - 600, 3: self.now - .5}.get(pid, 0)}
         module = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0),
                                  ast.ClassDef(name="Backend", bases=[], keywords=[], body=methods, decorator_list=[])], type_ignores=[])

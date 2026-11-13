@@ -4,9 +4,9 @@ import { playButtonHook } from "./PlayButtonLaunchHook";
 
 // Steam Controller / Steam Input close bridge. RegisterForControllerInputMessages
 // only signals that input happened (it does not identify the button). The Steam
-// Controller 2 is NOT visible to the browser Gamepad API, so if a web pad reports
-// button B we honour B-only (Xbox pads); if NO web button is pressed but the Steam
-// input event still fired, it is SC2 input and we treat it as a valid close.
+// Controller 2 may be absent from the browser Gamepad API. Only an explicit B
+// state is a close command here; keyboard/Steam Back remains handled by the hook.
+// An unclassified controller notification also occurs during launch and movement.
 export function initSteamControllerClose() {
   try {
     const scaLog = callable("sca_input_diag");
@@ -42,13 +42,14 @@ export function initSteamControllerClose() {
     const registration = S.Input.RegisterForControllerInputMessages(function () {
       try {
         const h = playButtonHook;
+        if (!h?.setupDone) return;
         const now = Date.now();
         const instant = !!(h && h.instantCurtainVisible);
         const overlay = curtainRunning;
         const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()) : [];
         const bPressed = pads.some((pad) => !!(pad && pad.buttons && pad.buttons[1] && pad.buttons[1].pressed));
         const anyPadButton = pads.some((pad) => pad && (pad.buttons || []).some((b) => b && b.pressed));
-        const treatAsClose = bPressed || !anyPadButton;
+        const treatAsClose = bPressed;
         if ((instant || overlay) && now - lastDbg > 1500) {
           lastDbg = now;
           try { scaLog("SC2 input cover instant=" + instant + " overlay=" + overlay + " b=" + bPressed + " any=" + anyPadButton); } catch (e) {}

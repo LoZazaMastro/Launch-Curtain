@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import ctypes
-import difflib
 import html as html_lib
 import hashlib
 import json
@@ -21,19 +20,40 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from ctypes import wintypes
 from urllib.parse import parse_qs, quote, unquote, urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Callable, Any, Dict, List, Optional, Tuple
 
 import decky
+
+# Windows Decky's frozen Python may omit this optional standard-library module.
+# Keep matching identical to CPython without making the whole plugin unavailable.
+try:
+    import difflib
+except ModuleNotFoundError as error:
+    if error.name != "difflib":
+        raise
+    _diff_spec = importlib.util.spec_from_file_location("launch_curtain_difflib", os.path.join(os.path.dirname(__file__), "vendor", "difflib.py"))
+    difflib = importlib.util.module_from_spec(_diff_spec)
+    _diff_spec.loader.exec_module(difflib)
 
 _asset_spec = importlib.util.spec_from_file_location("launch_curtain_managed_assets", os.path.join(os.path.dirname(__file__), "managed_assets.py"))
 _managed_assets = importlib.util.module_from_spec(_asset_spec)
 _asset_spec.loader.exec_module(_managed_assets)
 
+_progress_spec = importlib.util.spec_from_file_location("launch_curtain_loading_progress", os.path.join(os.path.dirname(__file__), "helpers", "loading_progress.py"))
+_loading_progress = importlib.util.module_from_spec(_progress_spec)
+_progress_spec.loader.exec_module(_loading_progress)
+
+_content_spec = importlib.util.spec_from_file_location("launch_curtain_first_content", os.path.join(os.path.dirname(__file__), "helpers", "first_content.py"))
+_first_content = importlib.util.module_from_spec(_content_spec)
+_content_spec.loader.exec_module(_first_content)
+
+
 
 PLAYHUB_YELLOW = "#FCCC01"
 MODERN_FAIL_OPEN_SECONDS = 75.0
+MODERN_UNKNOWN_TARGET_SECONDS = 8.0
+MODERN_PRESENTED_STABLE_SECONDS = 0.35
 MODERN_SPECULATIVE_SECONDS = 2.5
-MODERN_FADE_TO_BLACK_SECONDS = 0.62
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "settings_version": 15,
@@ -252,6 +272,7 @@ TRANSIENT_LAUNCH_PROCESS_EXACT = {
     "gamingservicesnet.exe",
     "gamelaunchhelper.exe",
     "playhub.gamesession.exe",
+    "playhubsteaminputreader.exe",
     "playhub.xboxsession.exe",
     "easyanticheat.exe",
     "easyanticheat_eos.exe",
@@ -281,6 +302,33 @@ def _is_transient_launch_process(process_name: str) -> bool:
         name in TRANSIENT_LAUNCH_PROCESS_EXACT
         or any(hint in name for hint in TRANSIENT_LAUNCH_PROCESS_HINTS)
     )
+
+
+def _post_first_content(body: Dict[str, Any]) -> Dict[str, Any]:
+    # Existing authenticated Agent endpoint; never proxy or log the shell token.
+    directory = os.path.join(os.environ.get("APPDATA", ""), "GamingMode")
+    with open(os.path.join(directory, "xbox-shell-token"), "r", encoding="utf-8") as handle:
+        token = handle.read(129).strip()
+    if not re.fullmatch(r"[0-9A-Fa-f]{64}", token):
+        raise ValueError("local authorization unavailable")
+    with open(os.path.join(directory, "config.json"), "r", encoding="utf-8-sig") as handle:
+        port = json.load(handle).get("safety", {}).get("apiPort", 47991)
+    if type(port) is not int or not 0 < port < 65536:
+        raise ValueError("invalid local endpoint")
+    payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
+    if len(payload) > 4096:
+        raise ValueError("bounded cover request")
+    from urllib.request import build_opener, ProxyHandler
+    request = Request(f"http://127.0.0.1:{port}/session/launch-curtain/cover", data=payload,
+                      headers={"X-Playhub-Shell-Token": token, "Content-Type": "application/json"}, method="POST")
+    with build_opener(ProxyHandler({})).open(request, timeout=2.0) as response:
+        result = response.read(4097)
+    if len(result) > 4096:
+        raise ValueError("bounded cover reply")
+    decoded = json.loads(result)
+    if not isinstance(decoded, dict):
+        raise ValueError("invalid cover reply")
+    return decoded
 
 
 def _query_verified_uwp_session(app_id: int) -> List[Dict[str, Any]]:
@@ -1349,7 +1397,7 @@ def _ps_title_safe_match(query: str, title: str) -> bool:
 
 
 def _ps_comparison_title(value: str) -> str:
-    text = _ps_strip_search_noise(value).lower().replace("&", " and ").replace("'", " ").replace("’", " ")
+    text = _ps_strip_search_noise(value).lower().replace("&", " and ").replace("'", " ").replace("â€™", " ")
     text = unicodedata.normalize("NFKD", text)
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
     text = re.sub(r"[^a-z0-9]+", " ", text)
@@ -4580,7 +4628,7 @@ def _iidb_soundbite_display_name(value: str, game_title: str) -> str:
     for match in json_name_pattern.finditer(raw):
         candidates.append(_plain_html_text(match.group(1)))
     plain = _plain_html_text(raw)
-    candidates.extend(re.split(r'''[\n\r|•·]+''', plain))
+    candidates.extend(re.split(r'''[\n\r|â€¢Â·]+''', plain))
 
     game_norm = _ps_normalize_title(game_title)
     generic = {
@@ -4598,7 +4646,7 @@ def _iidb_soundbite_display_name(value: str, game_title: str) -> str:
         candidate = re.sub(r'''\biiDB\b''', " ", candidate, flags=re.IGNORECASE)
         candidate = re.sub(r'''\bSound\s*Bites?\b''', " ", candidate, flags=re.IGNORECASE)
         candidate = re.sub(r'''\b(?:audio|preview|download|listen)\b''', " ", candidate, flags=re.IGNORECASE)
-        candidate = re.sub(r'''\s+''', " ", candidate).strip(" -–—|:·•()[]{}")
+        candidate = re.sub(r'''\s+''', " ", candidate).strip(" -â€“â€”|:Â·â€¢()[]{}")
         if not candidate or len(candidate) < 2 or len(candidate) > 90:
             continue
         norm = _ps_normalize_title(candidate)
@@ -5794,6 +5842,30 @@ def _process_started_at(pid: int) -> float:
         kernel32.CloseHandle(handle)
 
 
+def _process_created_filetime(pid: int) -> int:
+    # Exact FILETIME is carried to the retained UIA worker; never reconstruct it
+    # from the launch graph's floating-point wall-clock representation.
+    if not _is_windows() or pid <= 0:
+        return 0
+    kernel32 = ctypes.windll.kernel32
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+    kernel32.GetProcessTimes.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return 0
+    try:
+        creation, exited, kernel, user = (wintypes.FILETIME() for _ in range(4))
+        if not kernel32.GetProcessTimes(handle, ctypes.byref(creation), ctypes.byref(exited), ctypes.byref(kernel), ctypes.byref(user)):
+            return 0
+        return (creation.dwHighDateTime << 32) | creation.dwLowDateTime
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _process_name(pid: int) -> str:
     image_path = _process_image_path(pid)
     return os.path.basename(image_path) if image_path else ""
@@ -5816,6 +5888,39 @@ def _window_title(hwnd: int) -> str:
     buffer = ctypes.create_unicode_buffer(length + 1)
     user32.GetWindowTextW(hwnd, buffer, length + 1)
     return buffer.value
+
+
+def _window_thread_id(hwnd: int) -> int:
+    if not _is_windows() or int(hwnd or 0) <= 0:
+        return 0
+    user32 = ctypes.windll.user32
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    pid = wintypes.DWORD()
+    return int(user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid)))
+
+
+def _window_is_root(hwnd: int) -> bool:
+    if not _is_windows() or int(hwnd or 0) <= 0:
+        return False
+    user32 = ctypes.windll.user32
+    user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+    user32.GetAncestor.restype = wintypes.HWND
+    return int(user32.GetAncestor(hwnd, 2) or 0) == int(hwnd)
+
+
+def _foreground_is_exact(hwnd: int, pid: int) -> bool:
+    if not _is_windows() or int(hwnd or 0) <= 0 or int(pid or 0) <= 0:
+        return False
+    user32 = ctypes.windll.user32
+    user32.GetForegroundWindow.argtypes = []
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    current = int(user32.GetForegroundWindow() or 0)
+    owner = wintypes.DWORD()
+    return bool(current == int(hwnd) and user32.GetWindowThreadProcessId(current, ctypes.byref(owner))
+                and int(owner.value) == int(pid) and int(user32.GetForegroundWindow() or 0) == current)
 
 
 def _window_pid(hwnd: int) -> int:
@@ -5845,11 +5950,17 @@ def _foreground_window() -> Dict[str, Any]:
         return {"hwnd": 0, "title": "", "pid": 0, "process": "", "platform": sys.platform}
 
     pid = _window_pid(hwnd)
+    title = _window_title(hwnd)
+    process = _process_name(pid)
+    # Process/title queries can take time. Never publish a foreground snapshot
+    # whose original HWND/PID has already changed by the end of those reads.
+    if _int_or_zero(user32.GetForegroundWindow()) != hwnd or _window_pid(hwnd) != pid:
+        return {"hwnd": 0, "title": "", "pid": 0, "process": "", "platform": sys.platform}
     return {
         "hwnd": hwnd,
-        "title": _window_title(hwnd),
+        "title": title,
         "pid": pid,
-        "process": _process_name(pid),
+        "process": process,
         "platform": sys.platform
     }
 
@@ -6095,6 +6206,85 @@ def _window_is_process_ready_game_surface(hwnd: int) -> bool:
     )
 
 
+def _window_class_name(hwnd: int) -> str:
+    if not _is_windows() or hwnd <= 0:
+        return ""
+    try:
+        query = ctypes.windll.user32.GetClassNameW
+        query.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        query.restype = ctypes.c_int
+        text = ctypes.create_unicode_buffer(256)
+        return text.value if query(wintypes.HWND(hwnd), text, len(text)) > 0 else ""
+    except Exception:
+        return ""
+
+
+def _presented_game_window(hwnd: int, pid: int, *, require_foreground: bool = False) -> Optional[Tuple[Any, ...]]:
+    """Read-only presentation facts; no process/app name can stand in for a root surface."""
+    if not _is_windows() or hwnd <= 0 or pid <= 0:
+        return None
+    try:
+        user32 = ctypes.windll.user32
+        for name in ("IsWindow", "IsWindowVisible", "IsIconic"):
+            fn = getattr(user32, name)
+            fn.argtypes = [wintypes.HWND]
+            fn.restype = wintypes.BOOL
+        user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+        user32.GetAncestor.restype = wintypes.HWND
+        user32.GetForegroundWindow.argtypes = []
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        target = wintypes.HWND(hwnd)
+        if (not user32.IsWindow(target) or not user32.IsWindowVisible(target)
+                or user32.IsIconic(target) or int(user32.GetAncestor(target, 2) or 0) != hwnd
+                or _window_pid(hwnd) != pid or _window_is_auxiliary_game_surface(hwnd)):
+            return None
+        window_class = _window_class_name(hwnd)
+        if not window_class or "splash" in window_class.casefold():
+            return None
+        cloaked = wintypes.DWORD()
+        query = ctypes.windll.dwmapi.DwmGetWindowAttribute
+        query.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+        query.restype = ctypes.c_long
+        if query(target, 14, ctypes.byref(cloaked), ctypes.sizeof(cloaked)) != 0 or cloaked.value:
+            return None
+        rect = _window_rect(hwnd)
+        monitor = _monitor_rect_for_window(hwnd)
+        if rect is None or monitor is None:
+            return None
+        bounds = (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
+        width, height = bounds[2] - bounds[0], bounds[3] - bounds[1]
+        # A tiny/empty/off-monitor splash is not an on-screen render surface.
+        visible_width = max(0, min(bounds[2], monitor.right) - max(bounds[0], monitor.left))
+        visible_height = max(0, min(bounds[3], monitor.bottom) - max(bounds[1], monitor.top))
+        if (width <= 0 or height <= 0
+                or visible_width * visible_height < width * height * .5
+                or not _window_is_process_ready_game_surface(hwnd)):
+            return None
+        # The size helper performs additional geometry reads. None of the
+        # earlier cloak/class/style/bounds facts may survive drift inside it.
+        latest_cloaked = wintypes.DWORD()
+        if query(target, 14, ctypes.byref(latest_cloaked), ctypes.sizeof(latest_cloaked)) != 0 or latest_cloaked.value:
+            return None
+        if _window_class_name(hwnd) != window_class or _window_is_auxiliary_game_surface(hwnd):
+            return None
+        latest_rect = _window_rect(hwnd)
+        latest_monitor = _monitor_rect_for_window(hwnd)
+        if (latest_rect is None or latest_monitor is None
+                or tuple(int(getattr(latest_rect, key)) for key in ("left", "top", "right", "bottom")) != bounds
+                or tuple(int(getattr(latest_monitor, key)) for key in ("left", "top", "right", "bottom"))
+                != tuple(int(getattr(monitor, key)) for key in ("left", "top", "right", "bottom"))):
+            return None
+        # Recheck exact ownership and foreground adjacent to returning facts.
+        if (not user32.IsWindow(target) or not user32.IsWindowVisible(target)
+                or user32.IsIconic(target) or int(user32.GetAncestor(target, 2) or 0) != hwnd
+                or _window_pid(hwnd) != pid
+                or (require_foreground and int(user32.GetForegroundWindow() or 0) != hwnd)):
+            return None
+        return (*bounds, window_class)
+    except Exception:
+        return None
+
+
 def _post_close_to_process_windows(pid: int) -> bool:
     if not _is_windows() or pid <= 0:
         return False
@@ -6244,56 +6434,156 @@ def _set_window_topmost(hwnd: int, enabled: bool = True) -> bool:
     return bool(user32.SetWindowPos(hwnd, insert_after, 0, 0, 0, 0, flags))
 
 
-def _focus_game_window_for_handoff(hwnd: int, pid: int = 0) -> bool:
-    """Bring the ready game in front and verify Windows actually accepted the focus."""
+def _set_owned_window_behind_game(hwnd: int, game_hwnd: int, current: Callable[[], bool]) -> bool:
+    """Retire one owned cover behind its exact foreground game without activation."""
+    if not _is_windows() or hwnd <= 0 or game_hwnd <= 0 or hwnd == game_hwnd:
+        return False
+    user32 = ctypes.windll.user32
+    user32.IsWindow.argtypes = [wintypes.HWND]
+    user32.IsWindow.restype = wintypes.BOOL
+    user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+    user32.GetWindow.restype = wintypes.HWND
+    user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+    user32.SetWindowPos.restype = wintypes.BOOL
+    def already_below() -> bool:
+        cursor = game_hwnd
+        for _ in range(256):
+            cursor = int(user32.GetWindow(cursor, 2) or 0)
+            if cursor == hwnd:
+                return True
+            if not cursor or cursor == game_hwnd:
+                return False
+        return False
+    # Exact already-correct ordering needs no write. A topmost game may sit
+    # above our already non-topmost Steam window; never modify the game.
+    steam_style = _window_extended_style(hwnd)
+    if (user32.IsWindow(hwnd) and user32.IsWindow(game_hwnd)
+            and not user32.GetWindow(game_hwnd, 4) and steam_style > 0 and not (steam_style & 8)
+            and current() and already_below() and current()):
+        steam_style = _window_extended_style(hwnd)
+        return bool(user32.IsWindow(hwnd) and user32.IsWindow(game_hwnd)
+                    and not user32.GetWindow(game_hwnd, 4) and steam_style > 0
+                    and not (steam_style & 8) and current())
+    # A topmost or owned insert-after target cannot attest a mutating demotion.
+    if (not user32.IsWindow(hwnd) or not user32.IsWindow(game_hwnd)
+            or user32.GetWindow(game_hwnd, 4) or (_window_extended_style(game_hwnd) & 8)
+            or not current() or user32.GetWindow(game_hwnd, 4)
+            or (_window_extended_style(game_hwnd) & 8)):
+        return False
+    flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER
+    if not user32.SetWindowPos(hwnd, game_hwnd, 0, 0, 0, 0, flags):
+        return False
+    # Read back ordering and foreground; a successful API call alone is not proof.
+    cursor = game_hwnd
+    below = False
+    for _ in range(256):
+        cursor = int(user32.GetWindow(cursor, 2) or 0)
+        if cursor == hwnd:
+            below = True
+            break
+        if not cursor or cursor == game_hwnd:
+            break
+    return bool(below and not (_window_extended_style(hwnd) & 8) and current())
+
+
+def _focus_game_window_for_handoff(hwnd: int, pid: int = 0, *, allow_focus: Optional[Callable[[], bool]] = None) -> bool:
+    """One owned activation; detach input queues before verifying real focus."""
     hwnd = _int_or_zero(hwnd)
-    pid = _int_or_zero(pid)
     if not _is_windows() or hwnd <= 0:
         return False
     try:
+        if allow_focus is not None and not allow_focus():
+            return False
+        if _window_has_input_focus(hwnd):
+            return True
         user32 = ctypes.windll.user32
-        try:
-            user32.AllowSetForegroundWindow.argtypes = [wintypes.DWORD]
-            user32.AllowSetForegroundWindow.restype = wintypes.BOOL
-            user32.AllowSetForegroundWindow(wintypes.DWORD(0xFFFFFFFF))
-        except Exception:
-            pass
-
-        # A short topmost/ALT pulse helps games that ignore a plain
-        # SetForegroundWindow while Steam Big Picture has just left the topmost
-        # band. Verify after a small delay before allowing the frontend curtain
-        # to disappear, otherwise the Steam spinner can leak through for a beat.
-        for attempt in range(6):
-            try:
-                user32.keybd_event(wintypes.BYTE(0x12), wintypes.BYTE(0), wintypes.DWORD(0), 0)
-            except Exception:
-                pass
-            _set_window_topmost(hwnd, True)
-            _focus_window(hwnd)
-            time.sleep(0.08 if attempt < 2 else 0.16)
-            _set_window_topmost(hwnd, False)
-            try:
-                user32.keybd_event(wintypes.BYTE(0x12), wintypes.BYTE(0), wintypes.DWORD(0x0002), 0)
-            except Exception:
-                pass
+        user32.IsIconic.argtypes = [wintypes.HWND]
+        user32.IsIconic.restype = wintypes.BOOL
+        user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+        user32.SetForegroundWindow.restype = wintypes.BOOL
+        target = wintypes.HWND(hwnd)
+        if user32.IsIconic(target) or (allow_focus is not None and not allow_focus()):
+            return False
+        # Manual close keeps its existing single foreground request. Only the
+        # current owned launch callback can authorize a shared input queue.
+        if allow_focus is None:
+            user32.SetForegroundWindow(target)
+            time.sleep(0.08)
+            return not user32.IsIconic(target) and _window_has_input_focus(hwnd)
+        pid = _int_or_zero(pid)
+        if pid <= 0 or _window_pid(hwnd) != pid or not _window_is_root(hwnd):
+            return False
+        birth, image = _process_created_filetime(pid), _process_image_path(pid)
+        window_class, thread = _window_class_name(hwnd), _window_thread_id(hwnd)
+        origin = _foreground_window()
+        origin_hwnd, origin_pid = int(origin.get("hwnd", 0) or 0), int(origin.get("pid", 0) or 0)
+        origin_birth, origin_image = _process_created_filetime(origin_pid), _process_image_path(origin_pid)
+        origin_class, origin_thread = _window_class_name(origin_hwnd), _window_thread_id(origin_hwnd)
+        origin_is_target = (origin_hwnd, origin_pid) == (hwnd, pid)
+        if (birth <= 0 or not image or not window_class or thread <= 0
+                or origin_hwnd <= 0 or origin_pid <= 0 or origin_birth <= 0 or not origin_image
+                or not origin_class or origin_thread <= 0
+                or (not origin_is_target and (str(origin.get("process", "")).lower() not in STEAM_PROCESS_NAMES
+                    or os.path.basename(origin_image).lower() not in STEAM_PROCESS_NAMES))):
+            return False
+        def current() -> bool:
+            if (not allow_focus() or user32.IsIconic(target)
+                    or _process_created_filetime(pid) != birth
+                    or os.path.normcase(_process_image_path(pid)) != os.path.normcase(image)
+                    or _process_created_filetime(origin_pid) != origin_birth
+                    or os.path.normcase(_process_image_path(origin_pid)) != os.path.normcase(origin_image)
+                    or _window_pid(hwnd) != pid or _window_thread_id(hwnd) != thread
+                    or _window_class_name(hwnd) != window_class or not _window_is_root(hwnd)
+                    or _window_pid(origin_hwnd) != origin_pid or _window_thread_id(origin_hwnd) != origin_thread
+                    or _window_class_name(origin_hwnd) != origin_class or not _window_is_root(origin_hwnd)):
+                return False
             foreground = _foreground_window()
-            foreground_hwnd = int(foreground.get("hwnd", 0) or 0)
-            foreground_pid = int(foreground.get("pid", 0) or 0)
-            if foreground_hwnd == hwnd or (pid > 0 and foreground_pid == pid):
-                # DWM/Steam can still be a frame behind the API result. Re-check
-                # once after a short hold so the React curtain is not hidden while
-                # Steam is still visually frontmost.
-                time.sleep(0.18)
-                foreground = _foreground_window()
-                foreground_hwnd = int(foreground.get("hwnd", 0) or 0)
-                foreground_pid = int(foreground.get("pid", 0) or 0)
-                return foreground_hwnd == hwnd or (pid > 0 and foreground_pid == pid)
-        return False
-    except Exception:
+            return bool((int(foreground.get("hwnd", 0) or 0), int(foreground.get("pid", 0) or 0))
+                        in ((origin_hwnd, origin_pid), (hwnd, pid)) and allow_focus())
+        if not current():
+            return False
+        user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+        user32.AttachThreadInput.restype = wintypes.BOOL
+        user32.PeekMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT, wintypes.UINT]
+        user32.PeekMessageW.restype = wintypes.BOOL
+        for name in ("BringWindowToTop", "SetActiveWindow", "SetFocus"):
+            getattr(user32, name).argtypes = [wintypes.HWND]
+            getattr(user32, name).restype = wintypes.HWND if name != "BringWindowToTop" else wintypes.BOOL
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GetCurrentThreadId.argtypes = []
+        kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+        # PM_NOREMOVE creates this worker's queue without consuming a message.
+        message = wintypes.MSG()
+        user32.PeekMessageW(ctypes.byref(message), None, 0, 0, 0)
+        current_thread = int(kernel32.GetCurrentThreadId() or 0)
+        if current_thread <= 0 or not current():
+            return False
+        attached = []
+        detached = True
         try:
-            _set_window_topmost(hwnd, False)
-        except Exception:
-            pass
+            for other in dict.fromkeys((thread, origin_thread)):
+                if other == current_thread:
+                    continue
+                if not current() or not user32.AttachThreadInput(current_thread, other, True):
+                    return False
+                attached.append(other)
+            for action in (user32.BringWindowToTop, user32.SetForegroundWindow, user32.SetActiveWindow, user32.SetFocus):
+                if not current():
+                    return False
+                action(target)
+        finally:
+            for other in reversed(attached):
+                try:
+                    if not user32.AttachThreadInput(current_thread, other, False):
+                        detached = False
+                except Exception:
+                    detached = False
+        if not detached:
+            return False
+        # Shared queue state is not proof: read the game's own focus after detach.
+        time.sleep(0.08)
+        return bool(current() and not user32.IsIconic(target) and _window_has_input_focus(hwnd))
+    except Exception:
         return False
 
 
@@ -6746,12 +7036,18 @@ class Plugin:
         self.modern_active = False
         self.native_prompt_visible = False
         self.modern_started_at = 0.0
+        self.modern_underlay_active = False
+        self.modern_underlay_identity = None
+        self.modern_launch_processes = {}
+        self.modern_presented_probe = None
+        self.modern_handoff_attempts = set()
         self.current_launch_mode = None
         self.current_launch_timeout_enabled = None
         self.current_launch_timeout_seconds = None
         self.launch_request_started_at = 0.0
         self.known_processes: Dict[int, Dict[str, Any]] = {}
         self.launch_chain_pids: Dict[int, float] = {}
+        self.launch_chain_identities: Dict[int, Dict[str, Any]] = {}
         self.launch_game_candidates: Dict[int, Dict[str, Any]] = {}
         self.launch_game_fullscreen_since: Dict[int, float] = {}
         self.active_game_pids: Dict[int, float] = {}
@@ -6806,18 +7102,25 @@ class Plugin:
         )
 
     async def _unload(self) -> None:
+        self._first_content_actor().retire()
+        probe = getattr(self, "loading_progress_probe", None)
+        if probe is not None:
+            await probe.close()
         await self.stop_auto_mode()
         await self.hide_curtain()
         self._stop_black_cover()
         _log_info("Launch Curtain unloaded")
 
     async def _uninstall(self) -> None:
+        probe = getattr(self, "loading_progress_probe", None)
+        if probe is not None:
+            await probe.close()
         await self.hide_curtain()
         self._stop_black_cover()
 
     async def sca_input_diag(self, payload: str = "") -> Dict[str, Any]:
         # Diagnostica temporanea: il frontend (dentro Steam) legge l'input del
-        # controller via SteamClient.Input e ci manda qui la struttura, così
+        # controller via SteamClient.Input e ci manda qui la struttura, cosÃ¬
         # scopriamo il formato reale dei pulsanti dello Steam Controller 2.
         try:
             _log_info(f"SCA_INPUT_DIAG {payload}")
@@ -7189,6 +7492,7 @@ class Plugin:
     def _reset_process_tracking(self) -> None:
         self.known_processes = _process_snapshot()
         self.launch_chain_pids = {}
+        self.launch_chain_identities = {}
         self.launch_game_candidates = {}
         self.launch_game_fullscreen_since = {}
         self.active_game_pids = {}
@@ -8762,6 +9066,58 @@ class Plugin:
             "message": f"Cached {cached} games."
         }
 
+    def _first_content_actor(self):
+        actor = getattr(self, "first_content_actor", None)
+        if actor is None:
+            async def publish(body):
+                return await asyncio.to_thread(_post_first_content, body)
+            def tick():
+                kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                kernel32.GetTickCount64.restype = ctypes.c_ulonglong
+                return int(kernel32.GetTickCount64())
+            actor = _first_content.FirstContent(self._first_content_native, publish, report=_log_info, tick=tick)
+            self.first_content_actor = actor
+        return actor
+
+    def _first_content_native(self, held, mint):
+        request = (self.current_launch_app_id, self.launch_request_started_at)
+        if not self.modern_active or self.native_prompt_visible or not request[0] or request[1] <= 0:
+            return None
+        if mint:
+            receipt = getattr(self, "modern_steam_cover_receipt", None)
+            if not self._steam_cover_receipt_current(receipt):
+                return None
+        else:
+            if not isinstance(held, dict) or held.get("request") != request:
+                return None
+            receipt = held['receipt']
+        identity = receipt.get('identity', {})
+        hwnd, pid = int(receipt.get('hwnd', 0)), int(identity.get('pid', 0))
+        if (receipt.get('request') != request or pid <= 0 or hwnd <= 0
+                or _process_created_filetime(pid) != receipt.get('creation')
+                or os.path.normcase(_process_image_path(pid)) != os.path.normcase(identity.get('image', ''))
+                or _window_class_name(hwnd) != receipt.get('class')):
+            return None
+        publisher_birth = _process_created_filetime(os.getpid()) if mint else held['publisherBirth']
+        # Slow identity getters precede final cheap tuple and launch checks.
+        if (publisher_birth <= 0 or _window_class_name(hwnd) != receipt.get('class')
+                or _process_created_filetime(pid) != receipt['creation']
+                or _window_pid(hwnd) != pid or _window_thread_id(hwnd) != receipt.get('thread')
+                or not _window_is_root(hwnd) or request != (self.current_launch_app_id, self.launch_request_started_at)
+                or not self.modern_active or self.native_prompt_visible
+                or (mint and (getattr(self, "modern_steam_cover_receipt", None) is not receipt or not _foreground_is_exact(hwnd, pid)))):
+            return None
+        if not mint:
+            return held
+        return {'receipt': receipt, 'request': request, 'publisherBirth': publisher_birth,
+                'wire': {'publisherPid': os.getpid(), 'publisherBirth': str(publisher_birth),
+                         'steamPid': pid, 'steamBirth': str(receipt['creation']), 'steamWindow': str(hwnd),
+                         'steamThread': receipt['thread'], 'steamClass': receipt['class']}}
+
+    async def observe_modern_source(self, request: Any = None) -> Dict[str, Any]:
+        # The only mint path is the retained original Main render callback.
+        return self._first_content_actor().observe(request)
+
     async def get_status(self, diagnostics: bool = False) -> Dict[str, Any]:
         # Launch/controller polling consumes cached state. Window enumeration is
         # only needed for an explicit diagnostic request.
@@ -8778,16 +9134,22 @@ class Plugin:
         # must not look like a game exit. Reuse the process snapshot maintained by
         # the existing monitor and report only validated, still-live game PIDs.
         _game_running = any(pid in self.known_processes for pid in self.active_game_pids)
+        terminal = getattr(self, "modern_terminal_launch", None) or {}
+        binding = getattr(getattr(self, "first_content_actor", None), "launch", None) or terminal
         return {
             "is_windows": _is_windows(),
             "curtain_running": self._is_curtain_running(),
             "auto_mode": bool(self.settings.get("auto_mode")),
             "curtain_mode": str(self.settings.get("curtain_mode", "modern")),
             "modern_curtain_show": bool(self.modern_active),
-            "modern_launch_confirmed": bool(self.launch_request_confirmed or self.launch_action_started_at > 0 or self.launch_process_seen or self.launch_game_candidates or self.native_prompt_visible),
-            "modern_launch_app_id": self.current_launch_app_id,
-            "modern_launch_started_at": self.launch_request_started_at,
-            "modern_curtain_fade_to_black": bool(self.modern_active and self.modern_release_after > 0),
+            "modern_first_content_source": getattr(self, "first_content_actor", None).status() if getattr(self, "first_content_actor", None) is not None else None,
+            "modern_curtain_underlay": bool(self.modern_active and getattr(self, "modern_underlay_active", False)),
+            "modern_launch_confirmed": bool(self.launch_request_confirmed or self.launch_action_started_at > 0 or self.launch_process_seen or self.launch_game_candidates or self.native_prompt_visible or terminal),
+            "modern_launch_app_id": self.current_launch_app_id or terminal.get("appId"),
+            "modern_launch_started_at": self.launch_request_started_at or terminal.get("startedAt", 0),
+            "modern_launch_owner": binding.get("owner"),
+            "modern_launch_trigger": binding.get("triggerAt"),
+            "modern_curtain_fade_to_black": False,  # Legacy field; Modern keeps its artwork through handoff.
             "soundbite_playing": self._soundbite_is_playing(),
             "soundbite_path": self.current_launch_soundbite_path,
             "soundbite_title": self.current_launch_soundbite_title,
@@ -9063,12 +9425,19 @@ class Plugin:
             self.current_launch_timeout_enabled = bool(self.settings.get("timeout_enabled", DEFAULT_SETTINGS["timeout_enabled"]))
             self.current_launch_timeout_seconds = int(self.settings.get("curtain_timeout", DEFAULT_SETTINGS["curtain_timeout"]))
             timeout_enabled = self.current_launch_timeout_enabled
+        self.modern_launch_processes = {}
+        self.modern_presented_probe = None
+        self.modern_handoff_attempts = set()
+        self.modern_underlay_active = False
+        self.modern_underlay_identity = None
+        self.modern_terminal_launch = None
         self.launch_request_started_at = time.time()
         self.launch_request_confirmed = confirmed_launch
         self.launch_pending_until = self.launch_request_started_at + (pending_seconds if timeout_enabled else 3600)
         self.game_seen_since = 0.0
         self.current_launch_app_id = app_id
         self.launch_chain_pids = {}
+        self.launch_chain_identities = {}
         self.launch_game_candidates = {}
         self.launch_game_fullscreen_since = {}
         self.launch_candidate_focus_attempted = set()
@@ -9083,6 +9452,21 @@ class Plugin:
         _lr_mode = _lr_force if _lr_force in ("classic", "modern") else str(self.settings.get("curtain_mode", "modern"))
         self.current_launch_mode = _lr_mode
         self.modern_active = (_lr_mode == "modern")
+        self.modern_steam_cover_receipt = None
+        source_owner = request.get("source_owner") if isinstance(request, dict) else None
+        source_trigger = request.get("source_trigger") if isinstance(request, dict) else None
+        if (self.modern_active and isinstance(source_owner, str) and re.fullmatch(r"[a-zA-Z0-9-]{1,96}", source_owner)
+                and type(source_trigger) is int and (self.launch_request_started_at * 1000 - 10000) <= source_trigger <= self.launch_request_started_at * 1000 + 1000):
+            self._first_content_actor().begin(app_id, int((self.launch_request_started_at + 11644473600) * 10000000), source_owner, source_trigger)
+        else:
+            self._first_content_actor().retire()
+        self.loading_progress_reported = None
+        previous_probe = getattr(self, "loading_progress_probe", None)
+        if previous_probe is not None:
+            await previous_probe.close()
+        self.loading_progress_probe = _loading_progress.ProgressProbe() if self.modern_active and _is_windows() else None
+        if self.loading_progress_probe is not None:
+            self.loading_progress_probe.prewarm()
         self.modern_started_at = time.time() if self.modern_active else 0.0
         self.current_launch_show_logo = bool(game_settings.get("show_logo", True))
         self.current_launch_logo_zoom_enabled = bool(game_settings.get("logo_zoom_enabled", True))
@@ -9213,6 +9597,20 @@ class Plugin:
         self.overlay_process = None
 
     def _reset_launch_state(self) -> None:
+        self._first_content_actor().retire()
+        probe = getattr(self, "loading_progress_probe", None)
+        if probe is not None:
+            probe.retire()
+        self.loading_progress_probe = None
+        self.loading_progress_target = None
+        self.loading_progress_actor_present = False
+        self.modern_steam_cover_receipt = None
+        self.loading_progress_reported = None
+        self.modern_underlay_active = False
+        self.modern_underlay_identity = None
+        self.modern_launch_processes = {}
+        self.modern_presented_probe = None
+        self.modern_handoff_attempts = set()
         self.launch_pending_until = 0.0
         self.launch_request_started_at = 0.0
         self.game_seen_since = 0.0
@@ -9266,14 +9664,16 @@ class Plugin:
             return {"ok": True, "visible": visible}
         self.native_prompt_visible = visible
         if visible:
+            self._first_content_actor().retire()
+        if visible:
             self._release_modern_steam_topmost("native Steam prompt")
         _log_info(f"Native Steam prompt focus protection suspended={visible}")
         return {"ok": True, "visible": visible}
 
-    async def hide_curtain(self) -> Dict[str, Any]:
+    async def hide_curtain(self, *, restore_game_focus: bool = True) -> Dict[str, Any]:
         was_modern = bool(self.modern_active)
         manual_game_target: Optional[Dict[str, Any]] = None
-        if was_modern:
+        if was_modern and restore_game_focus:
             launcher_names = {
                 str(name).lower()
                 for name in self.settings.get("launcher_processes", DEFAULT_SETTINGS["launcher_processes"])
@@ -9413,10 +9813,204 @@ class Plugin:
             candidate["verified_uwp_windows"] = windows
             candidate["verified_uwp_birth"] = session["gameBirth"]
             candidate["verified_uwp_identity"] = session
+            candidate.update(birth=session["gameBirth"] / 10000000 - 11644473600,
+                             image=_process_image_path(pid), process=str(processes[pid]["process"]).lower(), app_id=app_id)
             self.active_game_pids.setdefault(pid, now)
             if not self.launch_process_seen:
                 _log_info(f"Verified COM Xbox game app_id={app_id} pid={pid}")
                 await self._start_curtain_for_detected_launch(str(processes[pid]["process"]), pid)
+
+    def _launch_process_is_current(self, pid: int, identity: Dict[str, Any], processes: Dict[int, Dict[str, Any]]) -> bool:
+        process = processes.get(pid, {})
+        birth = float(identity.get("birth", 0) or 0)
+        image = str(identity.get("image", ""))
+        return bool(birth > 0 and image
+                    and int(identity.get("app_id", 0)) == int(getattr(self, "current_launch_app_id", 0) or 0)
+                    and str(process.get("process", "")).lower() == identity.get("process")
+                    and abs(_process_started_at(pid) - birth) <= .05
+                    and os.path.normcase(_process_image_path(pid)) == os.path.normcase(image))
+
+    def _launch_handoff_allowed(self, hwnd: int, pid: int, processes: Dict[int, Dict[str, Any]], origin: Dict[str, Any]) -> bool:
+        if not self.modern_active or self.native_prompt_visible:
+            return False
+        if not self._launch_process_is_current(pid, self.launch_game_candidates.get(pid, {}), processes):
+            return False
+        if hwnd not in _windows_for_pid(pid, limit=24) or _presented_game_window(hwnd, pid) is None:
+            return False
+        if not self._launch_process_is_current(pid, self.launch_game_candidates.get(pid, {}), processes):
+            return False
+        origin_pid = int(origin.get("pid", 0) or 0)
+        origin_birth = float(origin.get("birth", 0) or 0)
+        origin_current = bool(origin_birth > 0 and str(origin.get("process", "")).lower() in STEAM_PROCESS_NAMES
+                              and abs(_process_started_at(origin_pid) - origin_birth) <= .05)
+        # Read foreground after the final potentially slow origin lifetime query.
+        current = _foreground_window()
+        if not self.modern_active or self.native_prompt_visible:
+            return False
+        if int(current.get("hwnd", 0) or 0) == hwnd and int(current.get("pid", 0) or 0) == pid:
+            return True
+        return bool(origin_current
+                    and int(current.get("hwnd", 0) or 0) == int(origin.get("hwnd", 0) or 0)
+                    and int(current.get("pid", 0) or 0) == origin_pid)
+
+    def _modern_loading_target_possible(self, processes: Dict[int, Dict[str, Any]]) -> bool:
+        # This only retains the cover; it grants no focus or game identity.
+        # A failed process/identity query is unknown, never evidence of exit.
+        if not processes:
+            return True
+        identities = {**getattr(self, "modern_launch_processes", {}), **self.launch_game_candidates}
+        for pid, identity in identities.items():
+            if pid not in processes or int(identity.get("app_id", 0)) != int(self.current_launch_app_id or 0):
+                continue
+            birth = _process_started_at(pid)
+            image = _process_image_path(pid)
+            if birth <= 0 or not image:
+                return True
+            if (abs(birth - float(identity.get("birth", 0) or 0)) <= .05
+                    and os.path.normcase(image) == os.path.normcase(str(identity.get("image", "")))):
+                return True
+        return False
+
+    def _modern_presented_game_ready(self, foreground: Dict[str, Any], processes: Dict[int, Dict[str, Any]]) -> bool:
+        hwnd, pid = int(foreground.get("hwnd", 0) or 0), int(foreground.get("pid", 0) or 0)
+        identity = self.launch_game_candidates.get(pid, {})
+        bounds = None
+        if self._launch_process_is_current(pid, identity, processes):
+            bounds = _presented_game_window(hwnd, pid, require_foreground=True)
+        # Slow native reads cannot turn a replaced PID or changed foreground
+        # into a successful handoff.
+        if bounds is None or not self._launch_process_is_current(pid, identity, processes):
+            self.modern_presented_probe = None
+            return False
+        latest = _foreground_window()
+        if int(latest.get("hwnd", 0) or 0) != hwnd or int(latest.get("pid", 0) or 0) != pid:
+            self.modern_presented_probe = None
+            return False
+        key = (int(self.current_launch_app_id or 0), pid, identity.get("birth"), identity.get("image"), hwnd, bounds)
+        now = time.monotonic()
+        probe = getattr(self, "modern_presented_probe", None)
+        if not probe or probe[0] != key or now < probe[1]:
+            self.modern_presented_probe = (key, now)
+            _log_info(f"Modern foreground surface under confirmation pid={pid} hwnd={hwnd} class={bounds[4]!r} bounds={bounds[:4]}")
+            return False
+        return now - probe[1] >= MODERN_PRESENTED_STABLE_SECONDS
+
+    def _modern_launch_retirement_due(self) -> bool:
+        # Existing exact-window qualification owns the proof. These are only
+        # the user's minimum cover duration / per-game exit-delay thresholds.
+        probe = getattr(self, "modern_presented_probe", None)
+        if not probe or len(probe) != 2 or self.modern_started_at <= 0:
+            return False
+        elapsed = time.time() - self.modern_started_at
+        stable = time.monotonic() - probe[1]
+        delay = self.current_launch_game_settle_seconds
+        if delay is None:
+            delay = self.settings.get("game_settle_seconds", DEFAULT_SETTINGS["game_settle_seconds"])
+        return bool(elapsed >= max(0., float(self.settings.get("min_visible_seconds", 2)))
+                    and stable >= max(MODERN_PRESENTED_STABLE_SECONDS, float(delay))
+                    and not self._soundbite_blocks_curtain_close())
+
+    async def _finish_modern_launch(self) -> None:
+        # Keep one read-only completion tombstone through reset: a throttled
+        # Main renderer may receive its first poll only after the game exits.
+        # It permits only retirement of that exact owner/trigger's DOM surface.
+        launch = getattr(getattr(self, "first_content_actor", None), "launch", None)
+        self.modern_terminal_launch = ({**launch, "startedAt": self.launch_request_started_at}
+                                      if isinstance(launch, dict) and launch.get("appId") == self.current_launch_app_id
+                                      else None)
+        await self.hide_curtain(restore_game_focus=False)
+
+    def _modern_underlay_close_reason(self, foreground: Dict[str, Any], processes: Dict[int, Dict[str, Any]]) -> str:
+        identity = getattr(self, "modern_underlay_identity", None)
+        if not identity:
+            return "underlay identity unavailable"
+        pid = int(identity["pid"])
+        if self.native_prompt_visible:
+            return "native Steam prompt"
+        foreground_pid = int(foreground.get("pid", 0) or 0)
+        if int(foreground.get("hwnd", 0) or 0) > 0 and foreground_pid != pid:
+            visual_identity = getattr(self, "modern_launch_processes", {}).get(foreground_pid, {})
+            if self._launch_process_is_current(foreground_pid, visual_identity, processes):
+                # Keep only the background artwork during an already-admitted
+                # same-launch child transition. This grants no focus/input role.
+                return ""
+        if processes and pid not in processes:
+            return "exact game exited"
+        if pid in processes:
+            birth, image = _process_started_at(pid), _process_image_path(pid)
+            if (birth > 0 and abs(birth - identity["birth"]) > .05
+                    or image and os.path.normcase(image) != os.path.normcase(identity["image"])):
+                return "exact game replaced"
+        # A null snapshot is unknown. It never authorizes focusing anything.
+        hwnd = int(foreground.get("hwnd", 0) or 0)
+        if hwnd <= 0 or int(foreground.get("pid", 0) or 0) == pid:
+            return ""
+        # Native foreground returning to Steam or another application ends only
+        # this visual underlay; no activation or game-input authority follows.
+        return "user foreground returned"
+
+    def _modern_foreground_release_reason(self, foreground: Dict[str, Any], processes: Dict[int, Dict[str, Any]]) -> str:
+        if not self.modern_active:
+            return ""
+        now = time.time()
+        identities = {**getattr(self, "modern_launch_processes", {}), **self.launch_game_candidates}
+        if (identities and not self.native_prompt_visible
+                and now - self.modern_started_at >= MODERN_UNKNOWN_TARGET_SECONDS
+                and not self._modern_loading_target_possible(processes)):
+            return "tracked launch processes ended"
+        hwnd, pid = int(foreground.get("hwnd", 0) or 0), int(foreground.get("pid", 0) or 0)
+        if self._modern_presented_game_ready(foreground, processes):
+            return "tracked root game surface is visible and foreground-stable"
+        if hwnd <= 0 or str(foreground.get("process", "")).lower() in STEAM_PROCESS_NAMES:
+            return ""
+        identity = self.launch_game_candidates.get(pid, {})
+        if identity and pid in processes and self._modern_loading_target_possible({pid: processes[pid]}):
+            # A loading, cloaked, minimized, tiny or transient game window is
+            # not a completed launch and must not reveal the Steam library.
+            return ""
+        # A positively admitted launch bridge (for example the packaged-game
+        # helper) may own foreground before the real game has a ready surface.
+        # Preserve only its background artwork; it is never a game candidate,
+        # completed presentation or authority to focus a window.
+        chain_identity = getattr(self, "modern_launch_processes", {}).get(pid, {})
+        launch = (self.current_launch_app_id, getattr(self, "launch_request_started_at", 0.0))
+        if (not self.native_prompt_visible and launch[1] > 0
+                and self._launch_process_is_current(pid, chain_identity, processes)):
+            latest = _foreground_window()
+            if (self.modern_active and not self.native_prompt_visible
+                    and launch == (self.current_launch_app_id, getattr(self, "launch_request_started_at", 0.0))
+                    and getattr(self, "modern_launch_processes", {}).get(pid) is chain_identity
+                    and int(latest.get("hwnd", 0) or 0) == hwnd and int(latest.get("pid", 0) or 0) == pid):
+                return ""
+        # Preserve explicit user control: never take focus from Alt-Tab or
+        # an unrelated application to maintain the loading cover.
+        return "foreground changed"
+
+    def _derived_launch_child_current(self, pid: int, identity: Dict[str, Any], parent_pid: int,
+                                      parent_identity: Dict[str, Any], parent_receipts: Dict[int, Dict[str, Any]],
+                                      request: Tuple[int, float], processes: Dict[int, Dict[str, Any]], pending_parent: bool = False) -> bool:
+        # Visual-only derivation from this request's already admitted parent.
+        # A global launcher name/class is never evidence of target ownership.
+        def same_request() -> bool:
+            return bool(self.modern_active and not self.native_prompt_visible and request[0] > 0 and request[1] > 0
+                        and request == (int(self.current_launch_app_id or 0), self.launch_request_started_at)
+                        and (pending_parent or getattr(self, "modern_launch_processes", None) is parent_receipts)
+                        and parent_receipts.get(parent_pid) is parent_identity
+                        and parent_identity.get("request_started_at") == request[1]
+                        and int(parent_identity.get("app_id", 0)) == request[0])
+        if (not same_request() or int(processes.get(pid, {}).get("parent_pid", 0)) != parent_pid
+                or not self._launch_process_is_current(parent_pid, parent_identity, processes)
+                or not self._launch_process_is_current(pid, identity, processes)):
+            return False
+        fresh = _process_snapshot()
+        child = fresh.get(pid, {})
+        if (int(child.get("parent_pid", 0)) != parent_pid
+                or float(identity.get("birth", 0)) < float(parent_identity.get("birth", 0))
+                or float(identity.get("birth", 0)) > time.time()
+                or not self._launch_process_is_current(parent_pid, parent_identity, fresh)
+                or not self._launch_process_is_current(pid, identity, fresh)):
+            return False
+        return bool(same_request() and int(child.get("parent_pid", 0)) == parent_pid)
 
     async def _monitor_process_launches(
         self,
@@ -9427,58 +10021,97 @@ class Plugin:
             return
 
         now = time.time()
+        if now >= self.launch_pending_until and not (getattr(self, "modern_active", False) and self._modern_loading_target_possible(processes)):
+            self.known_processes = processes
+            return
+
+        identities = getattr(self, "launch_chain_identities", {})
         self.launch_chain_pids = {
-            pid: expires_at
-            for pid, expires_at in self.launch_chain_pids.items()
-            if expires_at > now
+            pid: expires_at for pid, expires_at in self.launch_chain_pids.items()
+            if expires_at > now and self._launch_process_is_current(pid, identities.get(pid, {}), processes)
         }
-
-        known_pids = set(self.known_processes.keys())
-        new_processes = [
-            process
-            for pid, process in processes.items()
-            if pid not in known_pids
-        ]
+        self.launch_chain_identities = {pid: identities[pid] for pid in self.launch_chain_pids}
+        known_pids = set(self.known_processes)
+        new_processes = {pid: process for pid, process in processes.items() if pid not in known_pids}
         self.known_processes = processes
-
         if not new_processes:
             return
 
-        if now >= self.launch_pending_until:
-            return
-
         source_pids = {
-            pid
-            for pid, process in processes.items()
+            pid for pid, process in processes.items()
             if str(process.get("process", "")).lower() in STEAM_PROCESS_NAMES
             or str(process.get("process", "")).lower() in launcher_names
         }
-        source_pids.update(self.launch_chain_pids.keys())
+        source_pids.update(self.launch_chain_pids)
+        # The display timeout and the short discovery cache do not end a live
+        # launch. Only exact retained parents can authorize later children.
+        if getattr(self, "modern_active", False):
+            source_pids.update(pid for pid, identity in getattr(self, "modern_launch_processes", {}).items()
+                               if self._launch_process_is_current(pid, identity, processes))
+        admitted = {}
+        derived_launchers = set()
+        request = (int(self.current_launch_app_id or 0), self.launch_request_started_at)
+        # Resolve the whole fresh launch graph before consuming any candidate.
+        # A child PID can be smaller than its wrapper and both can first appear
+        # in the same Toolhelp snapshot. Numeric PID order is not parent order.
+        remaining = dict(new_processes)
+        for _ in range(min(32, len(remaining))):
+            progress = False
+            for pid, process in list(remaining.items()):
+                parent_pid = int(process.get("parent_pid", 0))
+                if parent_pid not in source_pids:
+                    continue
+                seeded = pid in source_pids
+                parent_receipts = admitted if parent_pid in admitted else getattr(self, "modern_launch_processes", {})
+                parent_identity = parent_receipts.get(parent_pid, {})
+                if seeded and (str(process.get("process", "")).lower() not in launcher_names
+                               or not parent_identity):
+                    continue
+                started_at = _process_started_at(pid)
+                image = _process_image_path(pid)
+                if started_at <= 0 or started_at < self.launch_request_started_at - 2.0 or not image:
+                    del remaining[pid]
+                    continue
+                parent_birth = _process_started_at(parent_pid)
+                if parent_birth > 0 and started_at < parent_birth:
+                    del remaining[pid]
+                    continue
+                identity = {"birth": started_at, "image": image,
+                            "process": str(process.get("process", "")).lower(),
+                            "app_id": int(getattr(self, "current_launch_app_id", 0) or 0),
+                            "request_started_at": request[1]}
+                if seeded:
+                    if not self._derived_launch_child_current(pid, identity, parent_pid, parent_identity,
+                                                             parent_receipts, request, processes, parent_pid in admitted):
+                        del remaining[pid]
+                        continue
+                    identity["visual_parent_pid"] = parent_pid
+                    identity["visual_parent_receipt"] = parent_identity
+                    derived_launchers.add(pid)
+                admitted[pid] = identity
+                self.launch_chain_pids[pid] = now + 45
+                self.launch_chain_identities[pid] = identity
+                source_pids.add(pid)
+                del remaining[pid]
+                progress = True
+            if not progress:
+                break
 
-        for process in sorted(new_processes, key=lambda item: int(item.get("pid", 0))):
-            pid = int(process.get("pid", 0))
+        for pid, identity in admitted.items():
+            if request != (int(self.current_launch_app_id or 0), self.launch_request_started_at):
+                return
+            if getattr(self, "modern_active", False):
+                self.modern_launch_processes = {**getattr(self, "modern_launch_processes", {}), pid: identity}
+            process = processes[pid]
             parent_pid = int(process.get("parent_pid", 0))
             process_name = str(process.get("process", "")).lower()
             parent_name = str(processes.get(parent_pid, {}).get("process", "")).lower()
-            parent_is_launch_source = (
-                parent_pid in source_pids
-                or parent_name in STEAM_PROCESS_NAMES
-                or parent_name in launcher_names
-            )
-
-            if not parent_is_launch_source:
-                continue
-
-            # The monitor sleeps between launches, so its previous snapshot can
-            # include a long idle gap. Ignore old Steam children from that gap,
-            # while retaining games created just before the backend launch signal.
-            started_at = _process_started_at(pid)
-            if started_at > 0 and started_at < self.launch_request_started_at - 2.0:
-                continue
-
-            self.launch_chain_pids[pid] = now + 45
 
             if process_name in IGNORED_LAUNCH_CHILDREN:
+                continue
+
+            if pid in derived_launchers:
+                _log_info(f"Derived visual launch bridge process={process_name} pid={pid} parent_pid={parent_pid} candidate=False")
                 continue
 
             if process_name in launcher_names:
@@ -9503,7 +10136,7 @@ class Plugin:
                 continue
 
             self.game_seen_since = 0.0
-            self.launch_game_candidates[pid] = {"first_seen": now}
+            self.launch_game_candidates[pid] = {"first_seen": now, **identity}
             self.active_game_pids.setdefault(pid, now)
             _log_info(
                 "Detected launch child "
@@ -9514,7 +10147,6 @@ class Plugin:
                 "candidate=True"
             )
             await self._start_curtain_for_detected_launch(process_name, pid)
-            return
 
     async def _hide_for_settled_process_candidate(self, processes: Dict[int, Dict[str, Any]]) -> None:
         if not self._is_curtain_running():
@@ -9528,7 +10160,7 @@ class Plugin:
         self.launch_game_candidates = {
             pid: data
             for pid, data in self.launch_game_candidates.items()
-            if pid in processes and now - float(data.get("first_seen", now)) <= 30
+            if self._launch_process_is_current(pid, data, processes) and now - float(data.get("first_seen", now)) <= 30
         }
         self.launch_game_fullscreen_since = {
             pid: fullscreen_since
@@ -9674,6 +10306,10 @@ class Plugin:
         return False
 
     async def _restore_steam_focus_after_game_exit(self, processes: Dict[int, Dict[str, Any]]) -> None:
+        if getattr(self, "modern_underlay_active", False):
+            # The passive visual phase must not activate Steam or the game.
+            # Normal exit tracking resumes after deterministic underlay teardown.
+            return
         now = time.time()
 
         if self.active_game_pids:
@@ -9745,25 +10381,128 @@ class Plugin:
             self.pending_steam_refocus_until = 0.0
             self.pending_steam_refocus_not_before = 0.0
 
-    def _release_modern_steam_topmost(self, reason: str = "modern curtain ended") -> None:
+    def _release_modern_steam_topmost(self, reason: str = "modern curtain ended", *,
+                                      foreground: Optional[Dict[str, Any]] = None,
+                                      processes: Optional[Dict[int, Dict[str, Any]]] = None) -> bool:
         hwnd = int(getattr(self, "modern_steam_topmost_hwnd", 0) or 0)
+        identity = getattr(self, "modern_steam_pin_identity", None)
+        receipt = getattr(self, "modern_steam_cover_receipt", None)
+        game_pid = int((foreground or {}).get("pid", 0) or 0)
+        game_hwnd = int((foreground or {}).get("hwnd", 0) or 0)
+        candidate = self.launch_game_candidates.get(game_pid) if foreground is not None else None
+        if candidate is not None and processes is not None and isinstance(receipt, dict):
+            # Historical ownership also covers the later passive-underlay handoff.
+            # Never replace a failed exact-game guard with a generic z-order write.
+            request = (self.current_launch_app_id, self.launch_request_started_at)
+            steam_hwnd = int(receipt.get("hwnd", 0) or 0)
+            steam = receipt.get("identity", {})
+            steam_pid = int(steam.get("pid", 0) or 0)
+            def bound() -> bool:
+                return bool(self.modern_active and not self.native_prompt_visible
+                            and request == (self.current_launch_app_id, self.launch_request_started_at)
+                            and receipt is getattr(self, "modern_steam_cover_receipt", None)
+                            and receipt.get("request") == request
+                            and self.launch_game_candidates.get(game_pid) is candidate
+                            and (not hwnd or (self.modern_steam_topmost_hwnd == hwnd
+                                 and self.modern_steam_pin_identity is identity
+                                 and hwnd == steam_hwnd and identity == steam)))
+            if (not bound() or steam_hwnd <= 0 or steam_pid <= 0 or game_hwnd <= 0
+                    or game_pid == steam_pid or game_hwnd == steam_hwnd
+                    or int(receipt.get("creation", 0) or 0) <= 0
+                    or not self._launch_process_is_current(game_pid, candidate, processes)
+                    or _process_created_filetime(steam_pid) != receipt["creation"]
+                    or os.path.normcase(_process_image_path(steam_pid)) != os.path.normcase(steam.get("image", ""))
+                    or _window_class_name(steam_hwnd) != receipt.get("class")
+                    or _presented_game_window(game_hwnd, game_pid, require_foreground=True) is None):
+                return False
+            creation = _process_created_filetime(game_pid)
+            game_class, game_thread = _window_class_name(game_hwnd), _window_thread_id(game_hwnd)
+            if (creation <= 0 or not game_class or game_thread <= 0
+                    or not self._launch_process_is_current(game_pid, candidate, processes)):
+                return False
+            # Process/file getters may block. Recheck their exact birth values
+            # before the final cheap HWND/request/foreground barrier.
+            if (_window_class_name(steam_hwnd) != receipt.get("class")
+                    or _window_class_name(game_hwnd) != game_class
+                    or _process_created_filetime(steam_pid) != receipt["creation"]
+                    or _process_created_filetime(game_pid) != creation):
+                return False
+            def current() -> bool:
+                return bool(bound() and _window_pid(steam_hwnd) == steam_pid
+                            and _window_thread_id(steam_hwnd) == receipt.get("thread")
+                            and _window_is_root(steam_hwnd)
+                            and _window_pid(game_hwnd) == game_pid
+                            and _window_thread_id(game_hwnd) == game_thread and _window_is_root(game_hwnd)
+                            and _foreground_is_exact(game_hwnd, game_pid) and bound())
+            released = _set_owned_window_behind_game(steam_hwnd, game_hwnd, current) if current() else False
+            if released and bound():
+                self.modern_steam_topmost_hwnd = 0
+                self.modern_steam_pin_identity = None
+            _log_info(f"Modern Steam exact-game demotion released={released} hwnd={steam_hwnd} game_hwnd={game_hwnd} game_pid={game_pid} reason={reason}")
+            return bool(released)
         if hwnd <= 0:
-            return
-        released = _set_window_topmost(hwnd, False)
-        self.modern_steam_topmost_hwnd = 0
+            return True
+        current = bool(identity and _window_pid(hwnd) == identity["pid"]
+                       and abs(_process_started_at(identity["pid"]) - identity["birth"]) <= .05
+                       and os.path.normcase(_process_image_path(identity["pid"])) == os.path.normcase(identity["image"]))
+        released = _set_window_topmost(hwnd, False) if current else False
+        if released:
+            self.modern_steam_topmost_hwnd = 0
+            self.modern_steam_pin_identity = None
         _log_info(f"Modern Steam topmost released={released} hwnd={hwnd} reason={reason}")
+        return bool(released)
+
+    def _modern_steam_cover_current(self, foreground: Dict[str, Any], request: Any) -> bool:
+        if (not self.modern_active or self.native_prompt_visible
+                or request != (self.current_launch_app_id, self.launch_request_started_at)):
+            return False
+        current = _foreground_window()
+        return bool(self.modern_active and not self.native_prompt_visible
+                    and request == (self.current_launch_app_id, self.launch_request_started_at)
+                    and int(foreground.get("hwnd", 0) or 0) > 0
+                    and int(foreground.get("pid", 0) or 0) > 0
+                    and int(current.get("hwnd", 0) or 0) == int(foreground.get("hwnd", 0) or 0)
+                    and int(current.get("pid", 0) or 0) == int(foreground.get("pid", 0) or 0)
+                    and str(current.get("process", "")).lower() in STEAM_PROCESS_NAMES)
 
     def _pin_steam_for_modern_curtain(self) -> int:
+        request = (self.current_launch_app_id, self.launch_request_started_at)
         hwnd = _find_steam_window() or 0
-        if hwnd <= 0:
+        foreground = _foreground_window()
+        pid = int(foreground.get("pid", 0) or 0)
+        if (hwnd <= 0 or int(foreground.get("hwnd", 0) or 0) != hwnd
+                or str(foreground.get("process", "")).lower() not in STEAM_PROCESS_NAMES
+                or _window_pid(hwnd) != pid):
+            self._release_modern_steam_topmost("Steam cover no longer foreground")
+            return 0
+        birth = _process_started_at(pid)
+        creation = _process_created_filetime(pid)
+        image = _process_image_path(pid)
+        window_class = _window_class_name(hwnd)
+        thread = _window_thread_id(hwnd)
+        if (birth <= 0 or creation <= 0 or not image or not window_class or thread <= 0
+                or not _window_is_root(hwnd)):
+            self._release_modern_steam_topmost("Steam cover identity unavailable")
             return 0
         current = int(getattr(self, "modern_steam_topmost_hwnd", 0) or 0)
         if current and current != hwnd:
-            _set_window_topmost(current, False)
+            self._release_modern_steam_topmost("Steam cover window changed")
+        if (not self._modern_steam_cover_current(foreground, request)
+                or _process_created_filetime(pid) != creation
+                or _window_pid(hwnd) != pid or _window_thread_id(hwnd) != thread or not _window_is_root(hwnd)
+                or not _foreground_is_exact(hwnd, pid)):
+            self._release_modern_steam_topmost("Steam cover foreground or launch changed")
+            return 0
         pinned = _set_window_topmost(hwnd, True)
         if pinned:
+            identity = {"pid": pid, "birth": birth, "image": image}
             self.modern_steam_topmost_hwnd = hwnd
-        return hwnd
+            self.modern_steam_pin_identity = identity
+            # Historical ownership is distinct from active topmost state. A
+            # yield drops active state but cannot itself authorize a later pin.
+            self.modern_steam_cover_receipt = {"request": request, "hwnd": hwnd, "identity": identity,
+                                               "creation": creation, "class": window_class, "thread": thread}
+        return hwnd if pinned else 0
 
     def _track_candidate_surface(self, pid: int, hwnd: int, now: float) -> Dict[str, Any]:
         candidate = self.launch_game_candidates.setdefault(pid, {"first_seen": now})
@@ -9891,7 +10630,7 @@ class Plugin:
         self.launch_game_candidates = {
             pid: data
             for pid, data in self.launch_game_candidates.items()
-            if pid in processes and now - float(data.get("first_seen", now)) <= 120
+            if self._launch_process_is_current(pid, data, processes)
         }
         candidate_pids = set(self.launch_game_candidates.keys())
         if not candidate_pids:
@@ -9928,7 +10667,7 @@ class Plugin:
                 hwnd = int(window.get("hwnd", 0) or 0)
                 if hwnd <= 0 or process in IGNORED_LAUNCH_CHILDREN:
                     continue
-                if _window_is_auxiliary_game_surface(hwnd):
+                if _presented_game_window(hwnd, pid) is None:
                     continue
                 if process in launcher_names or any(hint in title for hint in LAUNCHER_TITLE_HINTS):
                     continue
@@ -10003,7 +10742,7 @@ class Plugin:
             protected_since = float(candidate_state.get("protected_since", now))
             protected_last_seen = float(candidate_state.get("protected_last_seen", 0.0))
             first_seen = float(candidate_state.get("first_seen", now))
-            if protected_hwnd <= 0 or _window_is_auxiliary_game_surface(protected_hwnd):
+            if protected_hwnd <= 0 or _presented_game_window(protected_hwnd, pid) is None:
                 continue
             surface_state = self._track_candidate_surface(pid, protected_hwnd, now)
             if (
@@ -10044,7 +10783,9 @@ class Plugin:
         return None
 
     def _find_any_tracked_game_window(self, launcher_names: set[str]) -> Optional[Dict[str, Any]]:
-        candidate_pids = set(self.launch_game_candidates.keys())
+        processes = _process_snapshot()
+        candidate_pids = {pid for pid, identity in self.launch_game_candidates.items()
+                          if self._launch_process_is_current(pid, identity, processes)}
         if not candidate_pids:
             return None
         ranked: List[Tuple[int, Dict[str, Any]]] = []
@@ -10099,7 +10840,7 @@ class Plugin:
         active = getattr(self, "modern_focus_probe", None)
         if active:
             pid, hwnd = active["pid"], active["hwnd"]
-            if (now < active["until"] and pid in processes and pid in self.launch_game_candidates
+            if (now < active["until"] and self._launch_process_is_current(pid, self.launch_game_candidates.get(pid, {}), processes)
                     and hwnd in _windows_for_pid(pid, limit=12)
                     and not _window_is_auxiliary_game_surface(hwnd)):
                 return True
@@ -10107,7 +10848,7 @@ class Plugin:
             _log_info(f"Modern render focus probe ended pid={pid} hwnd={hwnd}")
             return False
         for pid, candidate in self.launch_game_candidates.items():
-            if pid not in processes or now - float(candidate.get("first_seen", now)) < 3.0:
+            if not self._launch_process_is_current(pid, candidate, processes) or now - float(candidate.get("first_seen", now)) < 3.0:
                 continue
             hwnd = int(candidate.get("protected_hwnd", 0) or 0)
             process = str(candidate.get("protected_process", "")).lower()
@@ -10150,6 +10891,176 @@ class Plugin:
                 return True
         return False
 
+    def _steam_cover_receipt_current(self, receipt: Any) -> bool:
+        if not isinstance(receipt, dict):
+            return False
+        def same_request() -> bool:
+            return bool(self.modern_active and not self.native_prompt_visible
+                        and not getattr(self, "modern_underlay_active", False)
+                        and getattr(self, "modern_steam_cover_receipt", None) is receipt
+                        and receipt.get("request") == (self.current_launch_app_id, self.launch_request_started_at))
+        identity = receipt.get("identity", {})
+        hwnd, pid = int(receipt.get("hwnd", 0) or 0), int(identity.get("pid", 0) or 0)
+        if (not same_request() or hwnd <= 0 or pid <= 0 or int(receipt.get("creation", 0)) <= 0
+                or _process_created_filetime(pid) != receipt["creation"]
+                or os.path.normcase(_process_image_path(pid)) != os.path.normcase(identity.get("image", ""))
+                or _window_class_name(hwnd) != receipt.get("class")):
+            return False
+        return bool(_process_created_filetime(pid) == receipt["creation"]
+                    and same_request() and _window_pid(hwnd) == pid and _window_is_root(hwnd)
+                    and _window_thread_id(hwnd) == receipt.get("thread") and same_request())
+
+    def _report_loading_progress(self, action: str, reason: str) -> None:
+        probe = getattr(self, "loading_progress_probe", None)
+        detail = probe.diagnostic() if probe is not None else {}
+        target = getattr(self, "loading_progress_target", None)
+        pid, hwnd = (target[1]["pid"], target[1]["hwnd"]) if target else (0, "0")
+        decision = detail.get("decision") or {}
+        mismatch = decision.get("mismatch") or {}
+        decision_key = tuple(decision.get(k) for k in ("closedAtDecision", "shapeAccepted", "nativeIdentityBeforeAfter", "complete", "rowCount", "visibleProgressBars", "interactiveEditOrButtons", "state", "reasonAbsent"))
+        mismatch_key = tuple(mismatch.get(k) for k in ("signature", "row", "field", "expectedType", "actualType", "expected", "actual"))
+        key = (self.current_launch_app_id, self.launch_request_started_at, action, reason,
+               detail.get("starts"), detail.get("errorType"), detail.get("winerror"), pid, hwnd,
+               detail.get("helperRevision"), detail.get("helperSha256"), detail.get("probeClosed"), decision_key, mismatch_key)
+        if getattr(self, "loading_progress_reported", None) == key:
+            return
+        self.loading_progress_reported = key
+        _log_info(f"Loading metadata action={action} reason={reason} query_ms={detail.get('durationMs', 0)} "
+                  f"starts={detail.get('starts', 0)}/{detail.get('startLimit', 3)} error_type={detail.get('errorType')} "
+                  f"winerror={detail.get('winerror')} rows={detail.get('rows')} loop_type={detail.get('loopType')} "
+                  f"app_id={self.current_launch_app_id} pid={pid} hwnd={hwnd} "
+                  f"helper_rev={detail.get('helperRevision')} helper_sha={detail.get('helperSha256')} probe_closed={detail.get('probeClosed')} closed_decision={decision.get('closedAtDecision')} "
+                  f"shape_accepted={decision.get('shapeAccepted')} native_identity={decision.get('nativeIdentityBeforeAfter')} "
+                  f"complete={decision.get('complete')} progress={decision.get('visibleProgressBars')} interactive={decision.get('interactiveEditOrButtons')} "
+                  f"state={decision.get('state')} reason_absent={decision.get('reasonAbsent')} "
+                  f"mismatch={mismatch_key if mismatch else None}")
+
+    def _loading_progress_request(self, pid: int, hwnd: int, processes: Dict[int, Dict[str, Any]]) -> Any:
+        if not self.modern_active or self.native_prompt_visible or getattr(self, "modern_underlay_active", False):
+            return None
+        identities = getattr(self, "modern_launch_processes", {})
+        identity = identities.get(pid, {})
+        parent_pid = int(identity.get("visual_parent_pid", 0) or 0)
+        parent = identity.get("visual_parent_receipt")
+        request = (int(self.current_launch_app_id or 0), self.launch_request_started_at)
+        if (request[0] <= 0 or request[1] <= 0 or not parent or identities.get(parent_pid) is not parent
+                or identity.get("request_started_at") != request[1]
+                or int(processes.get(pid, {}).get("parent_pid", 0)) != parent_pid
+                or not self._launch_process_is_current(parent_pid, parent, processes)
+                or not self._launch_process_is_current(pid, identity, processes)
+                or _window_class_name(hwnd) != "GAMINGSERVICESUI_HOSTING_WINDOW_CLASS"
+                or _window_pid(hwnd) != pid):
+            return None
+        birth = _process_created_filetime(pid)
+        if birth <= 0 or abs(birth / 10000000 - 11644473600 - float(identity["birth"])) > .05:
+            return None
+        target = {"hwnd":str(hwnd), "pid":pid, "birth":str(birth), "image":identity["image"],
+                  "windowClass":"GAMINGSERVICESUI_HOSTING_WINDOW_CLASS", "timeoutMs":2500, "maxElements":64, "maxDepth":5}
+        # A fresh graph is required after slow identity reads. The class alone
+        # never makes an arbitrary Gaming Services window a launch child.
+        fresh = _process_snapshot()
+        if (not self._derived_launch_child_current(pid, identity, parent_pid, parent, identities, request, fresh)
+                or identities is not getattr(self, "modern_launch_processes", None)
+                or identities.get(pid) is not identity or _window_pid(hwnd) != pid
+                or _window_class_name(hwnd) != target["windowClass"]
+                or not self.modern_active or self.native_prompt_visible
+                or request != (int(self.current_launch_app_id or 0), self.launch_request_started_at)):
+            return None
+        key = (request, pid, id(identity), hwnd, parent_pid, id(parent))
+        return key, target
+
+    async def _poll_loading_progress(self, processes: Dict[int, Dict[str, Any]]) -> None:
+        probe = getattr(self, "loading_progress_probe", None)
+        self.loading_progress_target = None
+        self.loading_progress_actor_present = False
+        if probe is None or not self.modern_active or self.native_prompt_visible or getattr(self, "modern_underlay_active", False):
+            if probe is not None:
+                probe.receipt = None
+            return
+        choices = []
+        veto_present = False
+        for pid, identity in list(getattr(self, "modern_launch_processes", {}).items())[:32]:
+            if not identity.get("visual_parent_pid"):
+                continue
+            for hwnd in _windows_for_pid(pid, limit=4):
+                # Presence is a STOP/yield signal even if attestation fails.
+                # It must never fall through to the old launcher hide scan.
+                veto_present = True
+                candidate = self._loading_progress_request(pid, hwnd, processes)
+                if candidate is not None:
+                    choices.append(candidate)
+        self.loading_progress_actor_present = veto_present
+        if len(choices) != 1:
+            probe.receipt = None
+            return
+        key, target = choices[0]
+        await probe.read(key, target)
+        # Query completion never substitutes for the final live request/chain
+        # check in the visual consumer.
+        if (getattr(self, "loading_progress_probe", None) is probe
+                and key[0] == (int(self.current_launch_app_id or 0), self.launch_request_started_at)
+                and self.modern_active and not self.native_prompt_visible):
+            self.loading_progress_target = (key, target)
+            self._report_loading_progress("query", probe.last_reason)
+
+    def _loading_progress_cover_current(self, foreground: Dict[str, Any], processes: Dict[int, Dict[str, Any]]) -> bool:
+        probe = getattr(self, "loading_progress_probe", None)
+        evidence = getattr(self, "loading_progress_target", None)
+        if probe is None or evidence is None:
+            return False
+        key, target = evidence
+        pid, hwnd = int(target["pid"]), int(target["hwnd"])
+        given = (int(foreground.get("hwnd", 0) or 0), int(foreground.get("pid", 0) or 0))
+        receipt = getattr(self, "modern_steam_cover_receipt", {}) or {}
+        pin = receipt.get("identity", {})
+        steam = (int(receipt.get("hwnd", 0) or 0), int(pin.get("pid", 0) or 0))
+        if (given != (hwnd, pid) and (given != steam or min(steam) <= 0)
+                or not probe.current(key, target) or self._loading_progress_request(pid, hwnd, processes) != evidence):
+            return False
+        latest = _foreground_window()
+        return bool(self.modern_active and not self.native_prompt_visible and probe.current(key, target)
+                    and getattr(self, "loading_progress_target", None) is evidence
+                    and key[0] == (int(self.current_launch_app_id or 0), self.launch_request_started_at)
+                    and (int(latest.get("hwnd", 0) or 0), int(latest.get("pid", 0) or 0)) == given)
+
+    def _retain_loading_progress_cover(self, foreground: Dict[str, Any], processes: Dict[int, Dict[str, Any]]) -> bool:
+        receipt = getattr(self, "modern_steam_cover_receipt", None)
+        probe = getattr(self, "loading_progress_probe", None)
+        evidence = getattr(self, "loading_progress_target", None)
+        if probe is None or evidence is None:
+            self.loading_progress_rejection = "loading-proof-unavailable"
+            return False
+        if not self._steam_cover_receipt_current(receipt):
+            self.loading_progress_rejection = "steam-receipt-not-current"
+            return False
+        if not self._loading_progress_cover_current(foreground, processes):
+            self.loading_progress_rejection = "loading-proof-not-current"
+            return False
+        hwnd = int(receipt["hwnd"])
+        # Recheck after all slow child/Steam queries; then finish with the
+        # existing fresh UIA age + exact actual foreground/current request.
+        if (not self._steam_cover_receipt_current(receipt)
+                or not self._loading_progress_cover_current(foreground, processes)
+                or getattr(self, "modern_steam_cover_receipt", None) is not receipt
+                or _window_class_name(hwnd) != receipt["class"]
+                or _process_created_filetime(receipt["identity"]["pid"]) != receipt["creation"]
+                or _window_pid(hwnd) != receipt["identity"]["pid"]
+                or _window_thread_id(hwnd) != receipt["thread"] or not _window_is_root(hwnd)
+                or not _foreground_is_exact(int(foreground.get("hwnd", 0) or 0), int(foreground.get("pid", 0) or 0))
+                or not self.modern_active or self.native_prompt_visible
+                or receipt["request"] != (self.current_launch_app_id, self.launch_request_started_at)
+                or getattr(self, "loading_progress_probe", None) is not probe
+                or getattr(self, "loading_progress_target", None) is not evidence
+                or not probe.current(*evidence)):
+            self.loading_progress_rejection = "final-proof-not-current"
+            return False
+        pinned = _set_window_topmost(hwnd, True)
+        if pinned:
+            self.modern_steam_topmost_hwnd = hwnd
+            self.modern_steam_pin_identity = receipt["identity"]
+        self.loading_progress_rejection = "retained" if pinned else "pin-failed"
+        return pinned
+
     def _protect_modern_curtain(
         self,
         foreground: Dict[str, Any],
@@ -10159,16 +11070,24 @@ class Plugin:
         if not self.modern_active or not _is_windows():
             return
 
-        if self.modern_release_after <= 0 and self._modern_candidate_focus_probe(processes, launcher_names):
-            # Do not undo activation in the same monitor tick. Some emulators create
-            # their rendering surface only while their window has input focus.
+        request = (self.current_launch_app_id, self.launch_request_started_at)
+        if getattr(self, "loading_progress_actor_present", False):
+            if not self._retain_loading_progress_cover(foreground, processes):
+                self._report_loading_progress("yield", getattr(self, "loading_progress_rejection", "loading-unknown"))
+                self._release_modern_steam_topmost("loading UI is unknown, interactive, stale or no longer current", foreground=foreground, processes=processes)
+            else:
+                self._report_loading_progress("retain", "fresh-progress-only")
+            # Never pass this actor to the legacy launcher hide/focus scan,
+            # including when the exact loading child is not foreground yet.
+            return
+        if not self._modern_steam_cover_current(foreground, request):
+            self._release_modern_steam_topmost("foreground belongs to another window", foreground=foreground, processes=processes)
             return
 
         candidate_pids = set(self.launch_game_candidates.keys())
         demoted = 0
-        # Hide known launcher windows and demote tracked game/splash windows out of
-        # the topmost band. The processes keep running and can build their real
-        # fullscreen surface behind Steam without being visible to the user.
+        # Track game surfaces without changing their own fullscreen/topmost state.
+        # Only the Steam cover owned by this launch may be pinned.
         try:
             for window in _visible_windows(limit=140):
                 hwnd = int(window.get("hwnd", 0) or 0)
@@ -10179,6 +11098,15 @@ class Plugin:
                     continue
                 title_matches_launcher = any(hint in title for hint in LAUNCHER_TITLE_HINTS)
                 if process in launcher_names or title_matches_launcher:
+                    tracked = getattr(self, "modern_launch_processes", {}).get(pid, {})
+                    if tracked.get("visual_parent_pid") or _window_class_name(hwnd) == "GAMINGSERVICESUI_HOSTING_WINDOW_CLASS":
+                        # A newly appearing actor or failed attestation can veto
+                        # suppression; class/name alone can never authorize cover.
+                        self._release_modern_steam_topmost("loading actor requires current progress-only proof")
+                        return
+                    if not self._modern_steam_cover_current(foreground, request):
+                        self._release_modern_steam_topmost("launcher attention foreground changed")
+                        return
                     if hwnd not in self.modern_hidden_launcher_windows and _hide_window(hwnd):
                         self.modern_hidden_launcher_windows[hwnd] = {
                             "process": process,
@@ -10195,22 +11123,26 @@ class Plugin:
                     candidate_state["protected_last_seen"] = time.time()
                     candidate_state["protected_process"] = process
                     candidate_state["protected_title"] = str(window.get("title", ""))
-                    if _set_window_topmost(hwnd, False):
-                        demoted += 1
         except Exception as error:
             _log_warning(f"Modern launch-window suppression failed: {error}")
 
+        # A newly appearing actor must veto before any focus probe. The
+        # original game-target/currentness guards inside that probe are unchanged.
+        if not self._modern_steam_cover_current(foreground, request):
+            self._release_modern_steam_topmost("foreground changed before game probe")
+            return
+        if self.modern_release_after <= 0 and self._modern_candidate_focus_probe(processes, launcher_names):
+            return
         foreground_process = str(foreground.get("process", "")).lower()
+        if not self._modern_steam_cover_current(foreground, request):
+            self._release_modern_steam_topmost("Steam cover foreground or launch changed after scan")
+            return
         steam_hwnd = self._pin_steam_for_modern_curtain()
         if steam_hwnd <= 0:
             return
 
         now = time.time()
-        if now - self.last_modern_cover_refocus_at >= 0.12:
-            self.last_modern_cover_refocus_at = now
-            focused = _focus_window(steam_hwnd)
-        else:
-            focused = foreground_process in STEAM_PROCESS_NAMES
+        focused = foreground_process in STEAM_PROCESS_NAMES
         if now - self.last_modern_cover_refocus_log_at >= 2.0:
             self.last_modern_cover_refocus_log_at = now
             _log_info(
@@ -10245,16 +11177,21 @@ class Plugin:
                 if _modern and self.modern_active and escape_pressed and not self.modern_escape_down:
                     self.modern_escape_down = True
                     _log_info("Modern emergency close requested by physical Escape key")
-                    await self.hide_curtain()
+                    await self.hide_curtain(restore_game_focus=not getattr(self, "modern_underlay_active", False))
                     continue
                 self.modern_escape_down = escape_pressed
                 if _is_windows() and self.settings.get("auto_mode") and not _modern:
                     self._cleanup_stale_black_cover_helpers()
                     self._start_black_cover()
 
-                await self._poll_verified_uwp_launch(processes)
-                await self._monitor_process_launches(processes, launcher_names)
-                if _modern and await self._release_unconfirmed_modern_launch():
+                passive_underlay = _modern and getattr(self, "modern_underlay_active", False)
+                if passive_underlay:
+                    if processes:
+                        self.known_processes = processes
+                else:
+                    await self._poll_verified_uwp_launch(processes)
+                    await self._monitor_process_launches(processes, launcher_names)
+                if _modern and not passive_underlay and await self._release_unconfirmed_modern_launch():
                     continue
                 if not _modern:
                     if self.modern_hidden_launcher_windows or self.modern_steam_topmost_hwnd or self.modern_release_after > 0:
@@ -10266,7 +11203,39 @@ class Plugin:
                     await self._hide_expired_launch_curtain()
                 await self._restore_steam_focus_after_game_exit(processes)
 
+                if _modern and self.modern_active and not passive_underlay:
+                    await self._poll_loading_progress(processes)
                 foreground = _foreground_window()
+                if _modern and self.modern_active:
+                    if getattr(self, "modern_underlay_active", False):
+                        underlay_reason = self._modern_underlay_close_reason(foreground, processes)
+                        if not underlay_reason and self._modern_launch_retirement_due():
+                            await self._finish_modern_launch()
+                            continue
+                        if underlay_reason:
+                            _log_info(f"Modern Main-only underlay retired without activation: {underlay_reason}")
+                            await self.hide_curtain(restore_game_focus=False)
+                        else:
+                            # Passive background retention: no window scan, pin,
+                            # focus attempt, popup suppression or animation work.
+                            await asyncio.sleep(0.25)
+                        continue
+                    release_reason = self._modern_foreground_release_reason(foreground, processes)
+                    if release_reason == "tracked root game surface is visible and foreground-stable":
+                        pid = int(foreground["pid"])
+                        target = self.launch_game_candidates[pid]
+                        if not self._modern_launch_retirement_due():
+                            await asyncio.sleep(0.05)
+                            continue
+                        if not self._release_modern_steam_topmost("completed launch", foreground=foreground, processes=processes):
+                            await asyncio.sleep(0.05)
+                            continue
+                        await self._finish_modern_launch()
+                        continue
+                    if release_reason:
+                        _log_info(f"Modern curtain released without activation: {release_reason}")
+                        await self.hide_curtain(restore_game_focus=False)
+                        continue
                 process = str(foreground.get("process", "")).lower()
                 title = str(foreground.get("title", "")).lower()
                 foreground_hwnd = int(foreground.get("hwnd", 0) or 0)
@@ -10290,57 +11259,57 @@ class Plugin:
                         and self.modern_started_at > 0
                         and now - self.modern_started_at >= MODERN_FAIL_OPEN_SECONDS
                         and not self._soundbite_blocks_curtain_close()
+                        and not self._modern_loading_target_possible(processes)
                     ):
-                        _log_warning("Modern curtain fail-open watchdog expired; releasing Steam UI")
+                        _log_warning("Modern launch recovery: no live tracked launch target after watchdog")
                         await self.hide_curtain()
                         continue
 
-                    # A Modern hand-off now has an explicit 0.5 s artwork -> black phase
-                    # while Steam is STILL pinned above the game. Only after that fade is
-                    # complete do we release Steam topmost and focus the verified game.
-                    # This makes the fade visible instead of burying the Steam DOM curtain
-                    # behind the game before its CSS transition can be seen.
+                    # Modern retains artwork through the existing verified handoff.
+                    # The captured target/one-attempt/final-focus guards are unchanged;
+                    # there is no artificial artwork-to-black deadline.
                     if self.modern_active and self.modern_release_after > 0:
                         if fullscreen_game_window:
                             self.modern_handoff_hwnd = int(fullscreen_game_window.get("hwnd", 0) or self.modern_handoff_hwnd or 0)
                             self.modern_handoff_pid = int(fullscreen_game_window.get("pid", 0) or self.modern_handoff_pid or 0)
                         target_hwnd = int(self.modern_handoff_hwnd or 0)
                         target_pid = int(self.modern_handoff_pid or 0)
+                        if (target_pid > 0 and not self._launch_process_is_current(
+                                target_pid, self.launch_game_candidates.get(target_pid, {}), processes)):
+                            _log_info(f"Modern hand-off target changed; retaining cover pending current game surface pid={target_pid} hwnd={target_hwnd}")
+                            self.modern_release_after = 0.0
+                            self.modern_handoff_hwnd = 0
+                            self.modern_handoff_pid = 0
+                            await asyncio.sleep(0.05)
+                            continue
                         if now < self.modern_release_after:
                             if not self.native_prompt_visible:
                                 self._protect_modern_curtain(foreground, launcher_names, processes)
-                        elif target_hwnd > 0 and now - self.last_modern_cover_refocus_at >= 0.12:
+                        elif (target_hwnd > 0 and not self.native_prompt_visible
+                                and (target_pid, target_hwnd) not in self.modern_handoff_attempts
+                                and now - self.last_modern_cover_refocus_at >= 0.12):
+                            self.modern_handoff_attempts.add((target_pid, target_hwnd))
                             self.last_modern_cover_refocus_at = now
-                            self._release_modern_steam_topmost("modern fade-to-black complete; verified game-focus attempt")
-                            focused_game = _focus_game_window_for_handoff(target_hwnd, target_pid)
+                            self._release_modern_steam_topmost("verified game-focus attempt with artwork retained")
+                            origin = {**foreground, "birth": _process_started_at(int(foreground.get("pid", 0) or 0))}
+                            focused_game = _focus_game_window_for_handoff(target_hwnd, target_pid,
+                                allow_focus=lambda: self._launch_handoff_allowed(target_hwnd, target_pid, processes, origin))
                             if focused_game:
                                 _log_info(
-                                    "Modern game hand-off complete after 0.5s fade-to-black "
+                                    "Modern game activation accepted with artwork retained; presentation pending "
                                     f"pid={target_pid} hwnd={target_hwnd} focused=True"
                                 )
-                                self.modern_active = False
-                                self.launch_pending_until = 0.0
-                                self.game_seen_since = 0.0
-                                self.launch_game_candidates = {}
-                                self.launch_game_fullscreen_since = {}
-                                self._restore_modern_launcher_windows("modern game focused after fade")
+                                # Dispatch success is not presentation proof. The next
+                                # monitor ticks confirm the same visible root surface.
+                                _log_info("Modern hand-off awaiting foreground-stable presentation")
                             else:
-                                # Put Steam back in front immediately and retry while the
-                                # frontend remains fully black; do not replay the artwork fade.
-                                steam_hwnd = self._pin_steam_for_modern_curtain()
-                                if steam_hwnd > 0:
-                                    _focus_window(steam_hwnd)
-                                self.modern_release_after = now + 0.15
-                                _log_warning(
-                                    "Modern game focus not yet accepted after fade; keeping black curtain visible "
-                                    f"pid={target_pid} hwnd={target_hwnd}"
-                                )
+                                _log_warning(f"Modern hand-off focus unconfirmed; cover retained without repeating activation pid={target_pid} hwnd={target_hwnd}")
                         elif target_hwnd <= 0:
-                            _log_info("Modern fade-to-black complete without a game target; closing curtain")
+                            _log_info("Modern no-target handoff completed; closing curtain")
                             self.modern_active = False
                             self.launch_pending_until = 0.0
                             self.game_seen_since = 0.0
-                            self._restore_modern_launcher_windows("modern no-target close after fade")
+                            self._restore_modern_launcher_windows("modern no-target close")
                     elif self.modern_active and not self.native_prompt_visible:
                         self._protect_modern_curtain(foreground, launcher_names, processes)
                     elif self.modern_active and self.native_prompt_visible and self.modern_steam_topmost_hwnd:
@@ -10361,20 +11330,20 @@ class Plugin:
                         if surface_ready and (now - self.modern_started_at >= min_visible) and not self._soundbite_blocks_curtain_close():
                             self.modern_handoff_hwnd = game_hwnd
                             self.modern_handoff_pid = game_pid
-                            self.modern_release_after = now + MODERN_FADE_TO_BLACK_SECONDS
+                            self.modern_release_after = now
                             ready_kind = str(fullscreen_game_window.get("ready_kind", "fullscreen"))
                             _log_info(
                                 "Modern curtain hand-off armed: tracked game surface settled; "
-                                "starting 0.5s fade-to-black before verified game focus"
+                                "retaining artwork through verified game focus"
                                 f" kind={ready_kind} pid={game_pid} hwnd={game_hwnd} "
                                 f"process={game_process} settle_seconds={handoff_settle} "
                                 f"readiness={ready_kind}"
                             )
-                    elif self.modern_active and self.modern_release_after <= 0 and bool(getattr(self, "current_launch_timeout_enabled", self.settings.get("timeout_enabled", DEFAULT_SETTINGS["timeout_enabled"]))) and self.launch_pending_until > 0 and now >= self.launch_pending_until and not self._soundbite_blocks_curtain_close():
-                        _log_info("Modern curtain hand-off: timeout; starting 0.5s fade-to-black without a game target")
+                    elif self.modern_active and self.modern_release_after <= 0 and bool(getattr(self, "current_launch_timeout_enabled", self.settings.get("timeout_enabled", DEFAULT_SETTINGS["timeout_enabled"]))) and self.launch_pending_until > 0 and now >= self.launch_pending_until and not self._soundbite_blocks_curtain_close() and not self._modern_loading_target_possible(processes):
+                        _log_info("Modern curtain hand-off: no live launch target at timeout; closing without fade")
                         self.modern_handoff_hwnd = 0
                         self.modern_handoff_pid = 0
-                        self.modern_release_after = now + MODERN_FADE_TO_BLACK_SECONDS
+                        self.modern_release_after = now
                     elif self.modern_active and self.modern_release_after <= 0 and not fullscreen_game_window:
                         self.game_seen_since = 0.0
                 elif self._is_curtain_running() and is_fullscreen_game:

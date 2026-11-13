@@ -10,8 +10,8 @@ class FocusProbeTests(unittest.TestCase):
     def setUp(self):
         tree = ast.parse(SOURCE.read_text(encoding="utf-8-sig"))
         methods = [node for cls in tree.body if isinstance(cls, ast.ClassDef) for node in cls.body
-                   if isinstance(node, ast.FunctionDef) and node.name in {"_modern_candidate_focus_probe", "_protect_modern_curtain"}]
-        self.assertEqual(len(methods), 2)
+                   if isinstance(node, ast.FunctionDef) and node.name in {"_modern_candidate_focus_probe", "_protect_modern_curtain", "_modern_steam_cover_current"}]
+        self.assertEqual(len(methods), 3)
         self.now = 10.0
         self.calls = []
         self.windows = [11]
@@ -19,6 +19,7 @@ class FocusProbeTests(unittest.TestCase):
         self.focused = True
         self.large_surface = True
         scope = {"time": SimpleNamespace(time=lambda: self.now), "_is_windows": lambda: True,
+                 "_foreground_window": lambda: {"hwnd":99,"pid":1,"process":"steam.exe"},
                  "_windows_for_pid": lambda pid, limit=12: self.windows,
                  "_window_is_auxiliary_game_surface": lambda hwnd: self.auxiliary,
                  "_window_is_process_ready_game_surface": lambda hwnd: self.large_surface,
@@ -30,7 +31,12 @@ class FocusProbeTests(unittest.TestCase):
         module = ast.Module(body=[ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0), ast.ClassDef(name="Backend", bases=[], keywords=[], body=methods, decorator_list=[])], type_ignores=[])
         exec(compile(ast.fix_missing_locations(module), str(SOURCE), "exec"), scope)
         self.backend = scope["Backend"]()
+        self.backend._launch_process_is_current = lambda pid, identity, processes: pid in processes
+        self.backend._release_modern_steam_topmost = lambda reason: self.calls.append(("release", reason))
         self.backend.modern_active = True
+        self.backend.current_launch_app_id = 123
+        self.backend.launch_request_started_at = 1.0
+        self.backend.native_prompt_visible = False
         self.backend.modern_release_after = 0
         self.backend.last_modern_cover_refocus_at = 0
         self.backend.last_modern_cover_refocus_log_at = 0
@@ -39,7 +45,7 @@ class FocusProbeTests(unittest.TestCase):
         self.processes = {7: {}}
 
     def protect(self):
-        self.backend._protect_modern_curtain({"process": "rap64.exe"}, set(), self.processes)
+        self.backend._protect_modern_curtain({"hwnd":99,"pid":1,"process":"steam.exe"}, set(), self.processes)
 
     def test_probe_keeps_existing_cover_and_does_not_refocus_or_demote(self):
         self.protect()
@@ -49,13 +55,14 @@ class FocusProbeTests(unittest.TestCase):
 
     def test_deadline_restores_protection_and_does_not_repeat_same_hwnd(self):
         self.protect(); self.calls.clear(); self.now += .9; self.protect()
-        self.assertEqual(self.calls, [("pin", 99), ("focus", 99)])
+        self.assertEqual(self.calls, [("pin", 99)])
         self.calls.clear(); self.now += .2; self.protect()
         self.assertNotIn(("focus", 11), self.calls)
 
     def test_destroyed_hwnd_cancels_probe_immediately(self):
         self.protect(); self.windows = []; self.calls.clear(); self.now += .1; self.protect()
-        self.assertIn(("focus", 99), self.calls)
+        self.assertIn(("pin", 99), self.calls)
+        self.assertNotIn(("focus", 99), self.calls)
 
     def test_auxiliary_or_unstable_surface_never_gets_probe(self):
         self.auxiliary = True; self.protect(); self.assertNotIn(("focus", 11), self.calls)
@@ -65,7 +72,7 @@ class FocusProbeTests(unittest.TestCase):
 
     def test_failed_focus_returns_to_protection_in_same_tick(self):
         self.focused = False; self.protect()
-        self.assertEqual(self.calls, [("pin", 99), ("focus", 11), ("pin", 99), ("focus", 99)])
+        self.assertEqual(self.calls, [("pin", 99), ("focus", 11), ("pin", 99)])
 
     def test_rap64_initial_render_window_on_4k_gets_probe_but_small_splash_does_not(self):
         self.large_surface = False

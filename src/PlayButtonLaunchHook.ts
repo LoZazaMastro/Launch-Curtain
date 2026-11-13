@@ -1,13 +1,357 @@
 import { PLAY_LABELS, BLOCKED_PLAY_LABEL_HINTS, PROBATION_COVER_MS, LAUNCH_BRIDGE_COVER_MS, CONFIRMED_LAUNCH_COVER_MS, POST_PLAY_CONFIRM_COVER_MS, POST_PLAY_ARM_MS, POST_PLAY_CONFIRM_PATTERN, POST_PLAY_CANCEL_PATTERN } from "./constants";
-import { debugLog, getImagePreview, getSoundbitePreview, getStatus, hideBlackCover, hideCurtain, launchRequested, resolveGameLogo, setNativePromptVisible, showBlackCover, soundbiteRuntimeFinished, soundbiteRuntimeStarted } from "./backend";
+import { observeModernSource, debugLog, getImagePreview, getSoundbitePreview, getStatus, hideBlackCover, hideCurtain, launchRequested, resolveGameLogo, setNativePromptVisible, showBlackCover, soundbiteRuntimeFinished, soundbiteRuntimeStarted } from "./backend";
 
 const POST_PLAY_PROMPT_HOLD_MS = 5 * 60 * 1000;
 const MODERN_FAIL_OPEN_MS = 75 * 1000;
 const MODERN_SPECULATIVE_MS = 2500;
 
+// SPDX-License-Identifier: MIT
+// Private LC render-lifecycle receipt. It conveys no game/input/Ready authority.
+class RenderedMainSource {
+    constructor(owner, send) {
+        this.owner = owner;
+        this.send = send;
+        this.busy = false;
+        this.revision = 0;
+    }
+    current(binding, launch) {
+        try {
+            const h = this.owner;
+            const node = binding.curtain;
+            const style = binding.win.getComputedStyle(node);
+            const rect = node.getBoundingClientRect();
+            const modern = h.isModernMode();
+            return binding.current() && h.instantCurtainVisible === true && modern && h.promptSuspended !== true
+                && Number(h.activeInstantAppId) === launch.appId
+                && Number(h.lastTriggerAt) === launch.triggerAt && launch.startedAt >= launch.triggerAt - 1000
+                && node.getAttribute('data-launch-curtain-owner') === h.instanceId
+                && node.getAttribute('data-launch-curtain-surface') === 'true'
+                && node.classList.contains('launch-curtain-instant--art-visible')
+                && style.display !== 'none' && style.visibility === 'visible' && style.opacity === '1'
+                && rect.width > 0 && rect.height > 0 && rect.left <= 0 && rect.top <= 0
+                && rect.right >= binding.win.innerWidth && rect.bottom >= binding.win.innerHeight
+                && node.ownerDocument === binding.doc && node.isConnected;
+        }
+        catch (_) {
+            return false;
+        }
+    }
+    revoke() {
+        ++this.revision;
+        const held = this.held;
+        this.held = undefined;
+        if (held)
+            void this.send({ ...held.body, action: 'revoke' }).catch(() => { });
+    }
+    async observe(status) {
+        const source = status?.modern_first_content_source;
+        if (!source || status.native_prompt_visible === true) {
+            this.revoke();
+            return;
+        }
+        if (this.busy)
+            return;
+        const hex = (s) => typeof s === 'string' && /^[a-f0-9]{32}$/.test(s);
+        if (!hex(source.challenge) || !hex(source.requestId) || !/^[1-9][0-9]{0,18}$/.test(source.revision)
+            || !Number.isInteger(source.appId) || source.appId <= 0
+            || source.owner !== this.owner.instanceId || source.triggerAt !== Number(this.owner.lastTriggerAt)) {
+            this.revoke();
+            return;
+        }
+        if (this.held && (this.held.body.requestId !== source.requestId || this.held.body.challenge !== source.challenge
+            || this.held.body.revision !== source.revision))
+            this.revoke();
+        this.busy = true;
+        const revision = this.revision;
+        const launch = { ...source, startedAt: Number(status.modern_launch_started_at) * 1000, triggerAt: Number(this.owner.lastTriggerAt) };
+        try {
+            let held = this.held;
+            if (!held) {
+                const binding = this.owner.readModernMainBinding();
+                if (!binding || binding.doc.hasFocus?.() !== true)
+                    return;
+                // Use the actual Main renderer's frame queue, never a synthetic rendered flag.
+                const frame = () => new Promise((resolve, reject) => {
+                    const timer = binding.win.setTimeout(() => reject(new Error('Main frame unavailable')), 1000);
+                    binding.win.requestAnimationFrame(() => { binding.win.clearTimeout(timer); resolve(); });
+                });
+                await frame();
+                await frame();
+                if (revision !== this.revision || binding.doc.hasFocus?.() !== true || !this.current(binding, launch))
+                    return;
+                const bytes = new Uint8Array(16);
+                binding.win.crypto.getRandomValues(bytes);
+                const receipt = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+                held = { binding, launch, body: { action: 'rendered', requestId: source.requestId,
+                        challenge: source.challenge, revision: source.revision, receipt } };
+                this.held = held;
+            }
+            if (!this.current(held.binding, held.launch)) {
+                this.revoke();
+                return;
+            }
+            const reply = await this.send({ ...held.body, action: held.sent ? 'renew' : 'rendered' });
+            if (revision !== this.revision || this.held !== held || !this.current(held.binding, held.launch)) {
+                if (this.held === held)
+                    this.revoke();
+                return;
+            }
+            if (reply?.ok !== true) {
+                this.revoke();
+                return;
+            }
+            held.sent = true;
+        }
+        catch (_) {
+            this.revoke();
+        }
+        finally {
+            this.busy = false;
+        }
+    }
+}
+
+// SPDX-License-Identifier: MIT
+// Passive Steam launch UI only. This never grants native/game/input authority.
+class NativeSteamLaunchProgress {
+    constructor(owner, apps, clock, findClasses) {
+        this.owner = owner; this.apps = apps; this.clock = clock; this.findClasses = findClasses;
+        this.registrations = []; this.revision = 0; this.disposed = false;
+    }
+    start() {
+        if (this.disposed || this.started) return this.started === true && !this.disposed;
+        const names = ['RegisterForGameActionStart', 'RegisterForGameActionEnd',
+            'RegisterForGameActionUserRequest', 'RegisterForGameActionShowUI', 'RegisterForGameActionShowError',
+            'RegisterForGameActionTaskChange'];
+        if (typeof this.apps.GetGameActionDetails !== 'function'
+            || names.some(name => typeof this.apps[name] !== 'function')) return false;
+        try {
+            const register = (name, callback) => {
+                const registration = this.apps[name](callback);
+                if (!registration || (typeof registration !== 'function' && typeof registration.unregister !== 'function'
+                    && typeof registration.Unregister !== 'function')) throw new Error('Native registration unavailable');
+                this.registrations.push(registration);
+            };
+            register(names[0], (id, gameId, action) => this.begin(id, gameId, action));
+            register(names[1], id => {
+                const held = this.held;
+                if (held?.id !== id) return;
+                if (!this.requestCurrent(held)) { this.invalidate(); return; }
+                // Steam retains this passive launching popup for up to 3000ms
+                // after its native action ends. Retain only its visual identity.
+                held.pending = undefined; held.facts = undefined;
+                held.endedAt ??= this.clock();
+            });
+            // Steam also emits UserRequest/ShowUI for work that auto-continues
+            // without displaying a dialog (including empty interstitial queues).
+            // Recheck the current native facts and actual popup before yielding.
+            for (const name of names.slice(2, 4)) register(name, id => {
+                const held = this.held;
+                if (held?.id !== id || !this.requestCurrent(held)) return;
+                held.pending = undefined; held.queriedAt = undefined;
+                held.attentionCheck = true; held.attentionBegan = this.clock();
+                this.read();
+                if (this.requestCurrent(held) && this.owner.visibleSteamAttentionPrompt?.()) {
+                    this.invalidate();
+                    this.owner.suspendInstantCurtainForPrompt();
+                }
+            });
+            register(names[4], id => {
+                const held = this.held;
+                if (held?.id !== id) return;
+                const current = this.requestCurrent(held);
+                this.invalidate();
+                if (current) this.owner.suspendInstantCurtainForPrompt();
+            });
+            register(names[5], id => {
+                const held = this.held;
+                if (held?.id !== id) return;
+                held.pending = undefined; held.facts = undefined; held.queriedAt = undefined;
+                this.read();
+            });
+            this.started = true; return true;
+        } catch (_) { this.dispose(); return false; }
+    }
+    requestCurrent(held) {
+        const h = this.owner;
+        return !this.disposed && this.held === held && h.patchedApps === this.apps && h.instanceId === held.owner
+            && h.instantCurtainVisible === true && h.isModernMode() && h.promptSuspended !== true
+            && Number(h.activeInstantAppId) === held.app && Number(h.lastTriggerAt) === held.trigger
+            && h.modernHandoffGeneration === held.generation;
+    }
+    current(held) {
+        const h = this.owner, source = h.firstContentSource?.held;
+        if (!this.requestCurrent(held)) return false;
+        const accepted = source?.sent === true && source?.launch?.appId === held.app
+            && source.launch.triggerAt === held.trigger && source.launch.owner === held.owner
+            && h.firstContentSource.current(source.binding, source.launch) === true;
+        if (accepted) {
+            if (held.source === undefined) held.source = source;
+            return held.source === source;
+        }
+        if (held.source !== undefined) return false; // A revoked accepted receipt never falls back.
+        const rendered = held.rendered, now = this.clock();
+        return h.modernLaunchConfirmed === true && rendered && now >= held.began && now - held.began <= 500
+            && rendered.binding.doc.hasFocus?.() === true
+            && h.firstContentSource?.current(rendered.binding, rendered.launch) === true;
+    }
+    async primeMain(held) {
+        try {
+            const binding = this.owner.readModernMainBinding?.();
+            if (!binding || binding.doc.hasFocus?.() !== true) return;
+            const launch = { appId: held.app, triggerAt: held.trigger, startedAt: held.trigger, owner: held.owner };
+            const frame = () => new Promise((resolve, reject) => {
+                const timer = binding.win.setTimeout(() => reject(new Error('Main progress frame unavailable')), 180);
+                binding.win.requestAnimationFrame(() => { binding.win.clearTimeout(timer); resolve(); });
+            });
+            await frame(); await frame();
+            if (!this.requestCurrent(held) || this.clock() < held.began || this.clock() - held.began > 250
+                || binding.doc.hasFocus?.() !== true || this.owner.firstContentSource?.current(binding, launch) !== true) return;
+            held.rendered = { binding, launch };
+        } catch (_) { /* Missing frames retain the ordinary attention yield. */ }
+    }
+    begin(id, gameId, action) {
+        this.invalidate();
+        const h = this.owner;
+        if (this.disposed || !Number.isSafeInteger(id) || id <= 0 || action !== 'LaunchApp'
+            || h.instantCurtainVisible !== true || !h.isModernMode() || h.promptSuspended === true
+            || h.extractAppIdFromUnknown(gameId) !== Number(h.activeInstantAppId)) return;
+        this.held = { id, gameId, app: Number(h.activeInstantAppId), trigger: Number(h.lastTriggerAt),
+            owner: h.instanceId, generation: h.modernHandoffGeneration, revision: this.revision, began: this.clock() };
+        // This is Steam's actual matching LaunchApp callback, not a speculative click.
+        h.armModernSpeculation?.(true);
+        void this.primeMain(this.held);
+        this.current(this.held); // Bind an already accepted Main receipt; absence grants nothing.
+        this.read();
+    }
+    read() {
+        const held = this.held, now = this.clock();
+        // Read-only action metadata may arrive before the Main render receipt.
+        // Only allow() can use it, after current() binds the accepted original Main.
+        if (!held || !this.requestCurrent(held) || held.endedAt !== undefined) return;
+        if (held.pending && now - held.pending.at <= 180) return;
+        if (held.queriedAt !== undefined && now - held.queriedAt < 100) return;
+        const pending = { at: now }; held.pending = pending; held.queriedAt = now;
+        try {
+            this.apps.GetGameActionDetails(held.id, details => {
+                const after = this.clock();
+                if (this.held !== held || held.pending !== pending || !this.requestCurrent(held)
+                    || after < pending.at || after - pending.at > 180) return;
+                held.pending = undefined;
+                held.facts = undefined;
+                const tasks = ['UpdatingAppInfo', 'UpdatingDRM', 'GettingLegacyKey', 'SynchronizingCloud',
+                    'VerifyingFiles', 'CreatingProcess', 'WaitingGameWindow', 'DownloadingDepots',
+                    'DownloadingWorkshop', 'ProcessingShaderCache', 'DelayLaunch', 'CheckShaderDepotManifest',
+                    'RunningInstallScript', 'SynchronizingStats', 'ShowInterstitials', 'SynchronizingControllerConfig',
+                    'ShowNoControllerConfig', 'SiteLicenseSeatCheckout'];
+                if (details?.strActionName === 'LaunchApp' && details.strTaskName === 'Completed'
+                    && typeof details.bWaitingForUI === 'boolean' && !details.strError
+                    && (details.gameid === undefined || details.gameid === held.gameId)
+                    && (details.nGameActionID === undefined || details.nGameActionID === held.id)) {
+                    held.endedAt ??= after;
+                    return;
+                }
+                // bWaitingForUI is also true while Steam awaits its own automatic
+                // continuation. Passivity remains specific to the exact progress
+                // popup below; a real choice/form/error still yields immediately.
+                if (!details || details.strActionName !== 'LaunchApp' || typeof details.bWaitingForUI !== 'boolean'
+                    || !tasks.includes(details.strTaskName) || details.strError
+                    || (details.gameid !== undefined && details.gameid !== held.gameId)
+                    || (details.nGameActionID !== undefined && details.nGameActionID !== held.id)) {
+                    if (held.attentionCheck && details?.strError) {
+                        this.invalidate();
+                        this.owner.suspendInstantCurtainForPrompt();
+                    }
+                    return;
+                }
+                held.attentionCheck = false;
+                held.facts = { at: after, requestStarted: pending.at };
+            });
+        } catch (_) { held.pending = undefined; held.facts = undefined; }
+    }
+    allow(prompt, actions) {
+        const held = this.held;
+        if (!held) return false;
+        this.read();
+        const now = this.clock(), facts = held.facts;
+        const freshFacts = facts && now >= facts.requestStarted && now - facts.requestStarted <= 200;
+        // The event may precede its asynchronous action-details reply. Only this
+        // exact passive progress shape may wait briefly for that reply; choices,
+        // forms, errors and foreign popups still take the ordinary yield below.
+        const pendingAttention = held.attentionCheck === true && held.pending
+            && now >= held.attentionBegan && now - held.attentionBegan <= 180;
+        const retainedEnd = held.endedAt !== undefined && now >= held.endedAt && now - held.endedAt <= 3000;
+        if ((!freshFacts && !pendingAttention && !retainedEnd) || !this.current(held)) return false;
+        try {
+            const classes = this.findClasses();
+            const names = ['GameLaunchingDialog', 'Layout', 'LeftColumn', 'RightColumn', 'PortraitContainer',
+                'GameName', 'StatusWrapper', 'Launching', 'OpenSteamButton'];
+            if (!classes || names.some(name => typeof classes[name] !== 'string' || !/^[-_a-zA-Z0-9]+$/.test(classes[name]))) return false;
+            const selector = name => `[class~="${classes[name]}"]`;
+            const roots = prompt.classList.contains(classes.GameLaunchingDialog) ? [prompt] : [...prompt.querySelectorAll(selector('GameLaunchingDialog'))];
+            if (roots.length !== 1 || actions.length !== 1 || !actions[0].classList.contains(classes.OpenSteamButton)) return false;
+            const root = roots[0];
+            if (!root.contains(actions[0]) || prompt.querySelector('input,select,textarea,[contenteditable="true"],[role="textbox"],[role="combobox"]')) return false;
+            if (names.slice(1).some(name => root.querySelectorAll(selector(name)).length !== 1)) return false;
+            const portrait = root.querySelector(selector('PortraitContainer'));
+            const nodes = [portrait, ...portrait.querySelectorAll('img')];
+            if (nodes.length > 6) return false;
+            const ids = nodes.map(node => this.owner.readReactAppId(node)).filter(id => id !== undefined);
+            const after = this.clock();
+            const stillFresh = facts && after >= facts.requestStarted && after - facts.requestStarted <= 200;
+            const stillPending = held.attentionCheck === true && held.pending
+                && after >= held.attentionBegan && after - held.attentionBegan <= 180;
+            const stillEnded = held.endedAt !== undefined && after >= held.endedAt && after - held.endedAt <= 3000;
+            return ids.length > 0 && ids.every(id => id === held.app) && this.current(held)
+                && (stillFresh || stillPending || stillEnded);
+        } catch (_) { return false; }
+    }
+    invalidate() { ++this.revision; this.held = undefined; }
+    dispose() {
+        this.invalidate(); this.disposed = true;
+        for (const registration of this.registrations.splice(0)) {
+            try {
+                if (typeof registration === 'function') registration();
+                else if (typeof registration.unregister === 'function') registration.unregister();
+                else registration.Unregister();
+            } catch (_) {}
+        }
+    }
+}
+
+
 // Hook del pulsante Play + instant curtain (DOM in-CEF). Ricostruito dal dist.
 class PlayButtonLaunchHook {
+    // Explicit existing state fields keep the guarded lifecycle type-checkable
+    // and remain valid JavaScript for the repository's local concatenator.
+    lastTriggerAt = 0;
+    lastTriggerAppId = undefined;
+    completedModernLaunch = false;
+    completedModernAppId = undefined;
+    postPlayCoverUntil = 0;
+    modernLaunchConfirmed = false;
+    modernHandoffArmed = false;
+    modernHandoffTimer = undefined;
+    activeInstantAppId = undefined;
+    modernUnderlayActive = false;
+    modernMainBinding = undefined;
+    modernUnderlayFocusCleanup = undefined;
+    modernUnderlayAnimationStyles = new Map();
+    modernUnderlayRetiring = false;
+    instantCurtainVisible = false;
+    instantCurtainSafetyTimer = undefined;
+    modernFadeToBlackActive = false;
+    instantCurtainElementsByDocument = new Map();
+    instantCurtainObserversByDocument = new Map();
+    instantCurtainKeyDocuments = new Set(Array());
+    handleKeyClose = undefined;
+    handleKeyDown = undefined;
+    handleMouseDown = undefined;
+    instantCurtainHideTimer = undefined;
+    instantCurtainTimer = undefined;
+    instantCurtainElement = undefined;
     constructor() {
+        this.firstContentSource = new RenderedMainSource(this, body => observeModernSource(body));
         this.instanceId = `launch-curtain-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         this.enabled = false;
         this.setupDone = false;
@@ -25,6 +369,7 @@ class PlayButtonLaunchHook {
         this.instantCurtainSafetyTimer = undefined;
         this.instantCurtainVisible = false;
         this.modernFadeToBlackActive = false;
+        this.modernHandoffGeneration = 0;
         this.modernSpeculationTimer = undefined;
         this.modernLaunchConfirmed = false;
         this.backendLaunchToken = 0;
@@ -69,6 +414,7 @@ class PlayButtonLaunchHook {
         this.gamepadClosePending = false;
         this.uiMode = undefined;
         this.handlePointerDown = (event) => {
+            if (this.modernUnderlayActive) return;
             if (this.cancelPostPlayInteraction("post-play pointerdown", event.target, event.composedPath())) {
                 return;
             }
@@ -76,6 +422,7 @@ class PlayButtonLaunchHook {
             this.handleLaunchInput("play button pointerdown", event.target, event.composedPath());
         };
         this.handleMouseDown = (event) => {
+            if (this.modernUnderlayActive) return;
             if (this.cancelPostPlayInteraction("post-play mousedown", event.target, event.composedPath())) {
                 return;
             }
@@ -83,6 +430,7 @@ class PlayButtonLaunchHook {
             this.handleLaunchInput("play button mousedown", event.target, event.composedPath());
         };
         this.handleTouchStart = (event) => {
+            if (this.modernUnderlayActive) return;
             if (this.cancelPostPlayInteraction("post-play touchstart", event.target, event.composedPath())) {
                 return;
             }
@@ -90,12 +438,15 @@ class PlayButtonLaunchHook {
             this.handleLaunchInput("play button touchstart", event.target, event.composedPath());
         };
         this.handlePointerOver = (event) => {
+            if (this.modernUnderlayActive) return;
             this.prearmFromEvent(event.target, event.composedPath());
         };
         this.handleFocusIn = (event) => {
+            if (this.modernUnderlayActive) return;
             this.prearmFromEvent(event.target, event.composedPath());
         };
         this.handleClick = (event) => {
+            if (this.modernUnderlayActive) return;
             if (this.cancelPostPlayInteraction("post-play click", event.target, event.composedPath())) {
                 return;
             }
@@ -103,6 +454,7 @@ class PlayButtonLaunchHook {
             this.handleLaunchInput("play button click", event.target, event.composedPath());
         };
         this.handleKeyClose = (event) => {
+            if (this.modernUnderlayActive) return false;
             const now = Date.now();
             const dismissKey = event.key === "Escape"
                 || event.key === "BrowserBack"
@@ -122,6 +474,7 @@ class PlayButtonLaunchHook {
             return false;
         };
         this.handleKeyDown = (event) => {
+            if (this.modernUnderlayActive) return;
             if (this.handleKeyClose(event)) {
                 return;
             }
@@ -145,24 +498,35 @@ class PlayButtonLaunchHook {
             this.hideExpiredInstantCurtain();
         };
     }
+    mainSteamScope() {
+        let found;
+        for (const root of [globalThis, globalThis.window, globalThis.window?.opener].filter(Boolean)) {
+            for (const name of ["SteamUIStore", "Router"]) {
+                const entry = root?.[name]?.WindowStore?.GamepadUIMainWindowInstance;
+                const win = entry?.BrowserWindow ?? entry?.m_BrowserWindow;
+                if (!entry || entry.IsMainGamepadUIWindow?.() !== true || entry.IsGamepadUIOverlayWindow?.() === true
+                    || !win?.document || win.closed === true) continue;
+                if (found && found.document !== win.document) return undefined;
+                found = { document: win.document, apps: win.SteamClient?.Apps ?? window.SteamClient?.Apps };
+            }
+        }
+        return found;
+    }
+    claimMainOwner() {
+        const scope = this.mainSteamScope();
+        const host = scope?.document ?? window.SteamClient?.Apps;
+        const key = "__playhubLaunchCurtainPlayHook";
+        if (!host) return;
+        const previous = host[key];
+        if (previous && previous !== this && previous.setupDone === true && typeof previous.cleanup === "function") previous.cleanup();
+        if (this.registryHost !== host && this.registryHost?.[this.registryKey] === this) delete this.registryHost[this.registryKey];
+        host[key] = this; this.registryHost = host; this.registryKey = key;
+    }
     setup() {
         if (this.setupDone) {
             return;
         }
-        const registryHost = window.SteamClient?.Apps;
-        const registryKey = "__playhubLaunchCurtainPlayHook";
-        try {
-            const previousHook = registryHost?.[registryKey];
-            if (previousHook && previousHook !== this && typeof previousHook.cleanup === "function") {
-                previousHook.cleanup();
-            }
-            if (registryHost) {
-                registryHost[registryKey] = this;
-                this.registryHost = registryHost;
-                this.registryKey = registryKey;
-            }
-        }
-        catch (_error) {}
+        this.claimMainOwner();
         this.setupDone = true;
         this.ensureInstantCurtainPrepared();
         document.addEventListener("pointerdown", this.handlePointerDown, true);
@@ -182,6 +546,7 @@ class PlayButtonLaunchHook {
         this.pollTimer = window.setInterval(() => this.patchSteamClient(), 1000);
     }
     cleanup() {
+        if (!this.setupDone) return; // A retired browser context cannot close the new owner's curtain.
         document.removeEventListener("pointerdown", this.handlePointerDown, true);
         document.removeEventListener("mousedown", this.handleMouseDown, true);
         document.removeEventListener("touchstart", this.handleTouchStart, true);
@@ -277,9 +642,12 @@ class PlayButtonLaunchHook {
         return this.gameSettingsForApp(appId).enabled !== false;
     }
     handleLaunchInput(reason, target, composedPath) {
+        if (!this.mainGamepadLaunchScope()) return;
         if (!this.isPlayButtonEvent(target, composedPath)) {
             return;
         }
+        this.completedModernLaunch = false;
+        const intentToken = this.backendLaunchToken;
         const path = [...composedPath];
         const immediateAppId = this.findAppIdForEvent(target, path);
         if (immediateAppId && !this.isGameEnabled(immediateAppId)) {
@@ -293,6 +661,7 @@ class PlayButtonLaunchHook {
         this.showNativeBlackCover(reason, LAUNCH_BRIDGE_COVER_MS);
         this.revealInstantCurtain(PROBATION_COVER_MS);
         window.setTimeout(() => {
+            if (!this.setupDone || this.completedModernLaunch || intentToken !== this.backendLaunchToken) return;
             const appId = immediateAppId || this.findAppIdForEvent(target, path);
             if (appId && !this.isGameEnabled(appId)) {
                 this.requestCloseAllCurtains();
@@ -304,6 +673,7 @@ class PlayButtonLaunchHook {
         }, 0);
     }
     prearmFromEvent(target, composedPath) {
+        if (this.completedModernLaunch) return;
         if (
             !this.enabled
             || this.instantCurtainVisible
@@ -317,6 +687,12 @@ class PlayButtonLaunchHook {
         if (appId && !this.isGameEnabled(appId)) {
             return;
         }
+        // Re-entering Play only warms the same assets. Avoid repeating DOM
+        // artwork scans and backend lookups on every focus/pointer notification.
+        const now = Date.now(), previous = this.prearmMemo;
+        if (appId && previous?.appId === appId && previous.settings === this.settingsCache
+            && now >= previous.at && now - previous.at < 2000) return;
+        if (appId) this.prearmMemo = { appId, settings: this.settingsCache, at: now };
         const settings = this.gameSettingsForApp(appId);
         const logoSource = appId && settings.show_logo !== false ? this.findGameLogoSource(appId) : undefined;
         this.prearmInstantCurtain(appId, logoSource, Boolean(appId && appId >= 2147483648), settings.show_logo !== false);
@@ -433,6 +809,22 @@ class PlayButtonLaunchHook {
             .trim();
     }
     findAppIdForEvent(target, composedPath) {
+        // The current details route is cheaper and more precise than walking
+        // React props and forcing computed styles for every gamepad poll.
+        for (const root of [globalThis, globalThis.window, globalThis.window?.opener].filter(Boolean)) {
+            const main = root?.SteamUIStore?.WindowStore?.GamepadUIMainWindowInstance;
+            const win = main?.BrowserWindow ?? main?.m_BrowserWindow;
+            if (!main || main.IsMainGamepadUIWindow?.() !== true || main.IsGamepadUIOverlayWindow?.() === true
+                || !win?.document || win.closed === true || target?.ownerDocument !== win.document
+                || target?.isConnected === false || main.MenuStore?.GetOpenSideMenu?.() !== 0
+                || main.m_ModalManager?.modals?.length) continue;
+            const match = /^\/library\/app\/(\d{1,10})$/.exec(String(main.m_locationPathname || ""));
+            const appId = match && Number(match[1]);
+            const declared = this.extractAppIdFromUnknown(target?.getAttribute?.("data-appid"))
+                ?? this.extractAppIdFromUnknown(target?.getAttribute?.("data-app-id"));
+            if (declared && declared !== appId) continue;
+            if (appId && this.isPlausibleAppId(appId)) return appId;
+        }
         const sources = [];
         const path = composedPath.length > 0 ? composedPath : this.parentPath(target);
         for (const item of path.slice(0, 16)) {
@@ -869,6 +1261,7 @@ class PlayButtonLaunchHook {
         return this.toFileUrl(source) || source;
     }
     trigger(reason, appId, logoSource, confirmedLaunch = false, isShortcut = false) {
+        if (!this.setupDone || this.isCompletedLaunchResume(appId)) return;
         if (!this.enabled) {
             this.dbg("trigger blocked: not enabled");
             return;
@@ -903,7 +1296,13 @@ class PlayButtonLaunchHook {
             this.requestCloseAllCurtains();
             return;
         }
-        this.lastTriggerAt = now;
+        // RunGame confirms the same visible Play intent; the backend's
+        // duplicate window keeps that request's original render epoch too.
+        const sameVisibleIntent = confirmedLaunch && appId && this.lastTriggerAppId === appId
+            && launchIsAlreadyVisible && !this.promptSuspended && this.lastTriggerAt > 0
+            && now >= this.lastTriggerAt && now - this.lastTriggerAt < 1500;
+        if (!sameVisibleIntent) this.lastTriggerAt = now;
+        this.lastTriggerAppId = appId;
         this.armModernSpeculation(confirmedLaunch);
         this.postPlayCoverUntil = now + POST_PLAY_ARM_MS;
         this.postPlayCoverReadyAt = now + Math.min(1100, PROBATION_COVER_MS);
@@ -1143,7 +1542,7 @@ class PlayButtonLaunchHook {
                 return;
             }
             this.backendLaunchTimer = undefined;
-            const request = { reason };
+            const request = { reason, source_owner: this.instanceId, source_trigger: Math.trunc(this.lastTriggerAt) };
             if (confirmedLaunch) {
                 request.confirmed_launch = true;
             }
@@ -1205,7 +1604,21 @@ class PlayButtonLaunchHook {
             this.backendLaunchTimer = undefined;
         }
     }
+    isCompletedLaunchResume(appId) {
+        if (!this.completedModernLaunch) return false;
+        let running = 0;
+        for (const root of [globalThis, globalThis.window, globalThis.window?.opener].filter(Boolean)) {
+            for (const slot of ["SteamUIStore", "Router"]) {
+                const value = Number(root?.[slot]?.MainRunningAppID || 0);
+                if (value > 0) running = value;
+            }
+        }
+        return Boolean((this.gameRunning || running > 0) && (!appId || !this.completedModernAppId
+            || Number(appId) === Number(this.completedModernAppId) || Number(appId) === running));
+    }
     showInstantLaunchSurface(appId) {
+        if (!this.setupDone || !this.enabled || this.isCompletedLaunchResume(appId) || (appId && !this.isGameEnabled(appId))) return;
+        this.completedModernLaunch = false;
         this.showNativeBlackCover("SteamClient immediate black cover", LAUNCH_BRIDGE_COVER_MS);
         const targetAppId = appId || this.prearmedInstantAppId || this.currentBackdropAppId;
         if (targetAppId) {
@@ -1239,7 +1652,7 @@ class PlayButtonLaunchHook {
         });
     }
     coverPostPlayInteraction(reason, target, composedPath) {
-        if (!this.enabled) {
+        if (!this.enabled || this.completedModernLaunch || this.gameRunning || this.modernUnderlayActive) {
             return false;
         }
         const now = Date.now();
@@ -1320,13 +1733,21 @@ class PlayButtonLaunchHook {
         });
     }
     patchSteamClient() {
+        if (!this.setupDone) return;
+        this.claimMainOwner();
         this.registerSteamPopupHooks();
-        const apps = window.SteamClient?.Apps;
-        if (!apps || apps === this.patchedApps) {
+        const apps = this.mainSteamScope()?.apps ?? window.SteamClient?.Apps;
+        if (!apps) return;
+        if (apps === this.patchedApps) {
+            this.nativeLaunchProgress?.start();
             return;
         }
         this.restoreMethodPatches();
         this.patchedApps = apps;
+        this.nativeLaunchProgress = new NativeSteamLaunchProgress(this, apps, () => performance.now(), () =>
+            DFL.findModule?.(mod => mod && typeof mod === 'object' && mod.GameLaunchingDialog
+                && mod.PortraitContainer && mod.OpenSteamButton && mod.StatusWrapper));
+        this.nativeLaunchProgress.start();
         [
             "RunGame",
             "RunGameAndWaitForInstaller",
@@ -1359,6 +1780,8 @@ class PlayButtonLaunchHook {
         }
     }
     restoreMethodPatches() {
+        this.nativeLaunchProgress?.dispose();
+        this.nativeLaunchProgress = undefined;
         this.methodRestorers.forEach((restore) => restore());
         this.methodRestorers = [];
     }
@@ -1388,6 +1811,8 @@ class PlayButtonLaunchHook {
                 const manager = root?.g_PopupManager;
                 const popups = Array.from(manager?.GetPopups?.() ?? manager?.m_mapPopups?.values?.() ?? []);
                 popups.forEach((entry) => {
+                    // Current Steam PopupManager entries expose .window; older builds used m_popup.
+                    push(entry?.window);
                     push(entry?.m_popup);
                     push(entry?.m_popup?.window);
                     push(entry?.m_element?.ownerDocument);
@@ -1596,8 +2021,15 @@ class PlayButtonLaunchHook {
         return curtain;
     }
     ensureInstantCurtainPrepared() {
+        if (!this.setupDone) return undefined;
+        if (this.completedModernLaunch && !this.instantCurtainVisible) return undefined;
+        if (this.modernUnderlayRetiring) return undefined;
+        if (this.modernUnderlayActive) return this.modernMainBinding?.curtain;
+        const modern = this.isModernMode();
+        const mainDocument = modern ? this.mainSteamScope()?.document : undefined;
+        const surfaceDocuments = modern ? (mainDocument ? [mainDocument] : []) : this.getAllSteamDocuments();
         for (const [doc, curtain] of Array.from(this.instantCurtainElementsByDocument.entries())) {
-            if (!curtain?.isConnected || !doc?.documentElement?.isConnected) {
+            if (!curtain?.isConnected || !doc?.documentElement?.isConnected || (modern && doc !== mainDocument)) {
                 try { this.instantCurtainObserversByDocument.get(doc)?.disconnect?.(); } catch (_error) {}
                 try { doc.removeEventListener("keydown", this.handleKeyDown, true); } catch (_error) {}
                 try { doc.removeEventListener("keyup", this.handleKeyClose, true); } catch (_error) {}
@@ -1613,7 +2045,7 @@ class PlayButtonLaunchHook {
                 this.instantCurtainElementsByDocument.delete(doc);
             }
         }
-        for (const doc of this.getAllSteamDocuments()) {
+        for (const doc of surfaceDocuments) {
             const existing = this.instantCurtainElementsByDocument.get(doc);
             try {
                 for (const stale of Array.from(doc.querySelectorAll('[data-launch-curtain-surface="true"]'))) {
@@ -1641,6 +2073,8 @@ class PlayButtonLaunchHook {
         return this.instantCurtainElement;
     }
     instantCurtains() {
+        if (this.modernUnderlayRetiring) return Array.from(this.instantCurtainElementsByDocument.values()).filter(item => item?.isConnected);
+        if (this.modernUnderlayActive) return this.modernMainBinding?.current() ? [this.modernMainBinding.curtain] : [];
         this.ensureInstantCurtainPrepared();
         return Array.from(this.instantCurtainElementsByDocument.values()).filter((item) => item?.isConnected);
     }
@@ -1725,7 +2159,7 @@ class PlayButtonLaunchHook {
         return effective === "modern";
     }
     dbg(msg) {
-        try { debugLog("LC " + String(msg)); } catch (e) {}
+        try { debugLog("LC owner=" + this.instanceId + " " + String(msg)); } catch (e) {}
     }
     startArmPoll() {
         this.stopArmPoll();
@@ -1764,7 +2198,7 @@ class PlayButtonLaunchHook {
                 }
             } catch (e) {}
             // Mostriamo la tenda ovunque TRANNE quando siamo con certezza in Desktop
-            // (EUIMode.Desktop === 7). In Big Picture o modalità sconosciuta -> mostra.
+            // (EUIMode.Desktop === 7). In Big Picture o modalitÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â  sconosciuta -> mostra.
             if (this.uiMode === 7) return false;
             return true;
         } catch (e) {
@@ -1941,8 +2375,99 @@ class PlayButtonLaunchHook {
             img.dataset.lcAnimationEpoch = epoch;
         }
     }
+    readModernMainBinding() {
+        let result;
+        for (const root of [globalThis, globalThis.window, globalThis.window?.opener].filter(Boolean)) {
+            for (const slot of ["SteamUIStore", "Router"]) {
+                const owner = root?.[slot], store = owner?.WindowStore;
+                if (!store) continue;
+                const instance = store.GamepadUIMainWindowInstance;
+                const win = instance?.BrowserWindow ?? instance?.m_BrowserWindow;
+                const doc = win?.document;
+                const curtain = this.instantCurtainElementsByDocument.get(doc);
+                if (!instance || !win || !doc || !curtain?.isConnected || win.closed === true
+                    || instance.IsMainGamepadUIWindow?.() !== true || instance.IsGamepadUIOverlayWindow?.() === true) continue;
+                if (result && (result.instance !== instance || result.win !== win || result.doc !== doc)) return undefined;
+                result = { instance, win, doc, curtain, current: () =>
+                    root?.[slot] === owner && owner.WindowStore === store && store.GamepadUIMainWindowInstance === instance
+                    && instance.IsMainGamepadUIWindow?.() === true
+                    && (instance.BrowserWindow ?? instance.m_BrowserWindow) === win
+                    && win.closed !== true && win.document === doc && curtain.isConnected === true
+                    && this.instantCurtainElementsByDocument.get(doc) === curtain };
+            }
+        }
+        return result;
+    }
+    clearModernUnderlayBinding() {
+        try { this.modernUnderlayFocusCleanup?.(); } catch (_error) {}
+        for (const [node, previous] of this.modernUnderlayAnimationStyles) {
+            if (node.style.animationPlayState === "paused") node.style.animationPlayState = previous;
+        }
+        this.modernUnderlayAnimationStyles.clear();
+        this.modernUnderlayFocusCleanup = undefined;
+        this.modernMainBinding = undefined;
+        this.modernUnderlayActive = false;
+    }
+    enterModernUnderlay() {
+        if (this.modernUnderlayActive) {
+            if (!this.modernMainBinding?.current()) this.hideInstantCurtain(true);
+            return;
+        }
+        const binding = this.readModernMainBinding();
+        if (!binding?.current()) {
+            this.dbg("Main-only underlay unavailable: exact Main document not retained");
+            this.hideInstantCurtain(true);
+            return;
+        }
+        this.modernMainBinding = binding;
+        this.modernUnderlayActive = true;
+        this.stopGamepadClosePolling();
+        this.stopPromptWatch();
+        if (this.instantCurtainSafetyTimer !== undefined) window.clearTimeout(this.instantCurtainSafetyTimer);
+        this.instantCurtainSafetyTimer = undefined;
+        for (const observer of this.instantCurtainObserversByDocument.values()) observer?.disconnect?.();
+        this.instantCurtainObserversByDocument.clear();
+        for (const doc of this.instantCurtainKeyDocuments) {
+            try { doc.removeEventListener("keydown", this.handleKeyDown, true); } catch (_error) {}
+            try { doc.removeEventListener("keyup", this.handleKeyClose, true); } catch (_error) {}
+        }
+        this.instantCurtainKeyDocuments.clear();
+        for (const [doc, curtain] of this.instantCurtainElementsByDocument) {
+            if (!curtain?.isConnected) continue;
+            for (const child of curtain.querySelectorAll?.("*") ?? []) {
+                this.modernUnderlayAnimationStyles.set(child, child.style.animationPlayState ?? "");
+                child.style.animationPlayState = "paused";
+            }
+            if (doc !== binding.doc) {
+                curtain.style.display = "none";
+                curtain.style.visibility = "hidden";
+                curtain.style.opacity = "0";
+                doc.documentElement?.classList?.remove("launch-curtain-cursor-hidden");
+            } else {
+                curtain.classList.remove("launch-curtain-instant--closing");
+                curtain.classList.add("launch-curtain-instant--art-visible");
+                curtain.style.pointerEvents = "none";
+                doc.documentElement?.classList?.remove("launch-curtain-cursor-hidden");
+            }
+        }
+        const returned = event => {
+            // Visual retirement only, never a native/game/input focus claim.
+            if (event?.isTrusted === true && event.target === binding.win
+                && this.modernUnderlayActive && this.modernMainBinding === binding && binding.current()) {
+                this.hideInstantCurtain(true);
+            }
+        };
+        binding.win.addEventListener?.("focus", returned);
+        this.modernUnderlayFocusCleanup = () => binding.win.removeEventListener?.("focus", returned);
+        this.modernFadeToBlackActive = false;
+        this.dbg("passive loading underlay retained only in exact Main document");
+    }
     syncModernCurtainSurfaces() {
         if (!this.instantCurtainVisible || !this.isModernMode()) return;
+        if (this.modernUnderlayActive) {
+            if (!this.modernMainBinding?.current()) this.hideInstantCurtain(true);
+            return;
+        }
         this.ensureInstantCurtainPrepared();
         this.applyInstantLogoPlacement(this.gameSettingsForApp(this.currentBackdropAppId));
         this.applyInstantBackdrop(this.currentBackdropAppId);
@@ -1950,18 +2475,9 @@ class PlayButtonLaunchHook {
         this.setInstantStatus(this.currentInstantStatusText);
     }
     beginModernFadeToBlack() {
-        if (!this.instantCurtainVisible || !this.isModernMode() || this.modernFadeToBlackActive) return;
-        this.modernFadeToBlackActive = true;
-        this.dbg("handoff: starting 0.5s fade-to-black before game focus");
-        for (const curtain of this.instantCurtains()) {
-            try {
-                curtain.style.transition = "none";
-                curtain.style.opacity = "1";
-                curtain.classList.remove("launch-curtain-instant--art-visible");
-                curtain.classList.add("launch-curtain-instant--closing");
-            }
-            catch (_error) {}
-        }
+        // Compatibility with an older backend status: Modern never removes
+        // artwork or adds the black closing class during a launch handoff.
+        return;
     }
     armModernSpeculation(confirmedLaunch) {
         if (!this.isModernMode()) return;
@@ -1981,33 +2497,71 @@ class PlayButtonLaunchHook {
     }
     startModernHandoffPoll() {
         this.stopModernHandoffPoll();
-        this.modernHandoffArmed = false;
+        const generation = this.modernHandoffGeneration;
+        const appId = Number(this.activeInstantAppId || 0);
+        const triggerAt = this.lastTriggerAt;
+        const isCurrent = () => generation === this.modernHandoffGeneration
+            && this.instantCurtainVisible && this.isModernMode()
+            && Number(this.activeInstantAppId || 0) === appId && this.lastTriggerAt === triggerAt;
         const poll = () => {
+            if (!isCurrent()) return;
+            this.modernHandoffTimer = undefined;
             void getStatus().then((st) => {
-                if (!this.instantCurtainVisible) { this.modernHandoffTimer = undefined; return; }
-                if (st?.modern_launch_confirmed === true
-                    && Number(st.modern_launch_app_id) === Number(this.activeInstantAppId)
-                    && Number(st.modern_launch_started_at) * 1000 >= this.lastTriggerAt - 1000) {
+                if (!isCurrent()) return;
+                const matchesLaunch = Number(st?.modern_launch_app_id || 0) === appId
+                    && Number(st?.modern_launch_started_at) * 1000 >= triggerAt - 1000;
+                if (st?.modern_launch_confirmed === true && matchesLaunch) {
                     this.modernLaunchConfirmed = true;
                 }
                 this.syncModernCurtainSurfaces();
-                if (st && st.modern_curtain_show === true) this.modernHandoffArmed = true;
-                if (this.modernHandoffArmed && st && st.modern_curtain_fade_to_black === true) {
-                    this.beginModernFadeToBlack();
+                if (!isCurrent()) return;
+                if (matchesLaunch) void this.firstContentSource.observe(st);
+                else this.firstContentSource.revoke();
+                if (st?.modern_curtain_show === true && matchesLaunch) this.modernHandoffArmed = true;
+                const nativeStatus = Object(st);
+                // A fast first-content handoff can complete before our first
+                // poll. Its exact current launch receipt is sufficient; waiting
+                // for an earlier visible=true sample leaves an opaque Main
+                // underlay over later Steam/mirror navigation indefinitely.
+                if (matchesLaunch && st?.modern_launch_confirmed === true && st?.modern_curtain_show === false
+                    && st.modern_launch_owner === this.instanceId && st.modern_launch_trigger === triggerAt) {
+                    this.dbg("handoff: retiring exact completed launch without a prior poll");
+                    this.retireCompletedModernCurtain();
+                    return;
                 }
-                if (this.modernHandoffArmed && st && st.modern_curtain_show === false) {
-                    this.dbg("handoff: hiding black cover after game focus");
-                    this.hideInstantCurtain();
+                if (nativeStatus.modern_curtain_underlay === true && matchesLaunch) {
+                    this.enterModernUnderlay();
+                    if (!isCurrent()) return;
+                }
+                if (!isCurrent()) return;
+                if (this.modernHandoffArmed && st?.modern_curtain_show === false) {
+                    this.dbg("handoff: retiring cover after backend completion");
+                    this.retireCompletedModernCurtain();
                     return;
                 }
                 this.modernHandoffTimer = window.setTimeout(poll, 100);
             }).catch(() => {
-                this.modernHandoffTimer = window.setTimeout(poll, 250);
+                if (isCurrent()) this.modernHandoffTimer = window.setTimeout(poll, 250);
             });
         };
         this.modernHandoffTimer = window.setTimeout(poll, 100);
     }
+    retireCompletedModernCurtain() {
+        const completedAppId = this.activeInstantAppId;
+        this.postPlayCoverUntil = 0;
+        this.postPlayCoverReadyAt = 0;
+        this.clearPendingBackendLaunch();
+        ++this.backendLaunchToken;
+        this.hideInstantCurtain(true);
+        this.destroyInstantCurtain();
+        this.completedModernLaunch = true;
+        this.completedModernAppId = completedAppId;
+    }
     stopModernHandoffPoll() {
+        this.firstContentSource.revoke();
+        // Timers cannot cancel an RPC already in flight. Retire its authority
+        // before clearing the timer so a late reply cannot affect a new launch.
+        this.modernHandoffGeneration += 1;
         if (this.modernHandoffTimer !== undefined) {
             window.clearTimeout(this.modernHandoffTimer);
             this.modernHandoffTimer = undefined;
@@ -2015,6 +2569,7 @@ class PlayButtonLaunchHook {
         this.modernHandoffArmed = false;
     }
     revealInstantCurtain(durationMs = PROBATION_COVER_MS) {
+        if (!this.setupDone) return;
         if (!this.enabled) {
             return;
         }
@@ -2022,6 +2577,7 @@ class PlayButtonLaunchHook {
             this.dbg("reveal blocked: not BigPicture uiMode=" + this.uiMode);
             return;
         }
+        this.clearModernUnderlayBinding();
         this.dbg("reveal modern=" + this.isModernMode() + " appId=" + this.currentBackdropAppId);
         if (this.instantCurtainHideTimer !== undefined) {
             window.clearTimeout(this.instantCurtainHideTimer);
@@ -2049,7 +2605,8 @@ class PlayButtonLaunchHook {
         this.dbg("modern surfaces=" + curtains.length);
         for (const curtain of curtains) {
             curtain.ownerDocument?.documentElement?.classList?.add("launch-curtain-cursor-hidden");
-            curtain.classList.remove("launch-curtain-instant--art-visible", "launch-curtain-instant--closing");
+            if (!wasVisible) curtain.classList.remove("launch-curtain-instant--art-visible");
+            curtain.classList.remove("launch-curtain-instant--closing");
             curtain.style.transition = "none";
             curtain.style.display = "flex";
             curtain.style.visibility = "visible";
@@ -2065,20 +2622,35 @@ class PlayButtonLaunchHook {
             window.requestAnimationFrame(() => {
                 if (!this.instantCurtainVisible) return;
                 this.instantCurtains().forEach((curtain) => curtain.classList.add("launch-curtain-instant--art-visible"));
+                const binding = this.readModernMainBinding();
+                this.dbg("visual Main connected=" + Boolean(binding?.current()) + " painted=" + Boolean(binding
+                    && this.firstContentSource.current(binding, { appId: this.activeInstantAppId, triggerAt: this.lastTriggerAt, startedAt: this.lastTriggerAt }))
+                    + " confirmed=" + this.modernLaunchConfirmed);
             });
         });
         if (this.isModernMode()) {
             this.instantCurtainExpiresAt = 0;
+            const safetyAppId = this.activeInstantAppId, safetyTriggerAt = this.lastTriggerAt;
             this.instantCurtainSafetyTimer = window.setTimeout(() => {
+                if (this.activeInstantAppId !== safetyAppId || this.lastTriggerAt !== safetyTriggerAt) return;
                 this.instantCurtainSafetyTimer = undefined;
                 if (!this.instantCurtainVisible) {
                     return;
                 }
-                this.dbg("fail-open watchdog released a stale modern curtain");
+                // A confirmed launch may still be loading. Only the backend's
+                // retained process/presentation checks can end that cover;
+                // Escape/B, native prompts and Alt-Tab remain available.
+                if (this.modernLaunchConfirmed || this.modernHandoffArmed) {
+                    this.dbg("confirmed loading cover retained after safety interval");
+                    return;
+                }
+                this.dbg("fail-open watchdog released an unconfirmed modern curtain");
                 this.requestCloseAllCurtains();
             }, MODERN_FAIL_OPEN_MS);
             this.startGamepadClosePolling();
             this.startModernHandoffPoll();
+            if (this.postPlayCoverUntil > Date.now()) this.startPromptWatch();
+            return;
         }
         if (this.postPlayCoverUntil > Date.now()) {
             this.startPromptWatch();
@@ -2096,6 +2668,7 @@ class PlayButtonLaunchHook {
         }
     }
     clearInstantArtwork() {
+        this.firstContentSource.revoke();
         this.backdropPreviewToken += 1;
         this.logoPreviewToken += 1;
         this.currentBackdropAppId = undefined;
@@ -2125,6 +2698,8 @@ class PlayButtonLaunchHook {
         this.setInstantCurtainLogo("", false);
     }
     hideInstantCurtain(clearArtworkImmediately = false) {
+        const wasUnderlay = this.modernUnderlayActive;
+        this.clearModernUnderlayBinding();
         if (this.modernSpeculationTimer !== undefined) window.clearTimeout(this.modernSpeculationTimer);
         this.modernSpeculationTimer = undefined;
         this.modernLaunchConfirmed = false;
@@ -2154,6 +2729,22 @@ class PlayButtonLaunchHook {
         this.prearmLogoToken += 1;
         this.lastTriggerAt = 0;
         const curtains = Array.from(this.instantCurtainElementsByDocument.values()).filter((item) => item?.isConnected);
+        if (wasUnderlay) {
+            // This layer was already behind the game. Never animate a cover on
+            // return to Main or leave it visible for the first physical pad event.
+            this.instantCurtainVisible = false;
+            for (const curtain of curtains) {
+                curtain.style.display = "none";
+                curtain.style.visibility = "hidden";
+                curtain.style.opacity = "0";
+                curtain.ownerDocument?.documentElement?.classList?.remove("launch-curtain-cursor-hidden");
+            }
+            this.modernFadeToBlackActive = false;
+            this.modernUnderlayRetiring = true;
+            try { this.clearInstantArtwork(); }
+            finally { this.modernUnderlayRetiring = false; }
+            return;
+        }
         if (!curtains.length || !this.instantCurtainVisible) {
             this.getAllSteamDocuments().forEach((doc) => doc.documentElement?.classList?.remove("launch-curtain-cursor-hidden"));
             return;
@@ -2161,7 +2752,20 @@ class PlayButtonLaunchHook {
         this.instantCurtainVisible = false;
         this.currentInstantStatusText = "";
         const modernHide = this.isModernMode();
-        const modernFadeAlreadyCompleted = modernHide && this.modernFadeToBlackActive;
+        if (modernHide) {
+            for (const curtain of curtains) {
+                curtain.style.transition = "none";
+                curtain.style.opacity = "0";
+                curtain.style.visibility = "hidden";
+                curtain.style.display = "none";
+                curtain.classList.remove("launch-curtain-instant--closing");
+                curtain.classList.remove("launch-curtain-instant--art-visible");
+                curtain.ownerDocument?.documentElement?.classList?.remove("launch-curtain-cursor-hidden");
+            }
+            this.modernFadeToBlackActive = false;
+            this.clearInstantArtwork();
+            return;
+        }
         for (const curtain of curtains) {
             try {
                 const statusTextEl = curtain.querySelector(".launch-curtain-instant__status-text");
@@ -2181,9 +2785,8 @@ class PlayButtonLaunchHook {
                 curtain.style.opacity = "0";
             }
         }
-        // Classic keeps the previous immediate-clear behavior. Modern deliberately
-        // keeps its artwork alive for the 500 ms fade-to-black, even on a manual
-        // close, so the transition cannot collapse into an abrupt cut.
+        // Classic retains its existing opacity transition and deferred cleanup.
+        // Modern has already retired above without a black transition.
         if (clearArtworkImmediately && !modernHide) {
             this.clearInstantArtwork();
         }
@@ -2200,9 +2803,10 @@ class PlayButtonLaunchHook {
             });
             this.modernFadeToBlackActive = false;
             this.clearInstantArtwork();
-        }, modernFadeAlreadyCompleted ? 40 : (modernHide ? 520 : 760));
+        }, 760);
     }
     destroyInstantCurtain() {
+        this.clearModernUnderlayBinding();
         if (this.instantCurtainSafetyTimer !== undefined) {
             window.clearTimeout(this.instantCurtainSafetyTimer);
             this.instantCurtainSafetyTimer = undefined;
@@ -2364,23 +2968,56 @@ class PlayButtonLaunchHook {
             return indices.some((index) => Boolean(pad.buttons[index]?.pressed));
         });
     }
-    currentFocusedPlayButton() {
-        for (const doc of this.getAllSteamDocuments()) {
-            const active = doc.activeElement;
-            if (this.isElementNode(active) && this.isPlayButtonEvent(active, [])) {
-                return active;
-            }
-            if (this.isElementNode(active)) {
-                let parent = active.parentElement;
-                for (let depth = 0; parent && depth < 5; depth += 1) {
-                    if (this.isPlayButtonEvent(parent, [])) {
-                        return parent;
-                    }
-                    parent = parent.parentElement;
-                }
+    mainGamepadLaunchScope() {
+        if (!this.setupDone || !this.enabled || this.gameRunning || this.modernUnderlayActive || this.instantCurtainVisible) return;
+        const scope = this.mainSteamScope();
+        const doc = scope?.document;
+        if (!doc || doc.hasFocus?.() !== true) return;
+        for (const root of [globalThis, globalThis.window, globalThis.window?.opener].filter(Boolean)) {
+            for (const slot of ["SteamUIStore", "Router"]) {
+                const ui = root?.[slot], main = ui?.WindowStore?.GamepadUIMainWindowInstance;
+                const win = main?.BrowserWindow ?? main?.m_BrowserWindow;
+                if (win?.document !== doc || main?.IsMainGamepadUIWindow?.() !== true
+                    || main.IsGamepadUIOverlayWindow?.() === true || win.closed === true) continue;
+                if (Number(ui.MainRunningAppID) > 0 || main.MenuStore?.GetOpenSideMenu?.() !== 0
+                    || main.m_ModalManager?.modals?.length || !/^\/library\/app\/[1-9][0-9]*$/.test(main.m_locationPathname)) return;
+                return { main, doc, route: main.m_locationPathname };
             }
         }
-        return undefined;
+    }
+    currentFocusedPlayButton() {
+        const scope = this.mainGamepadLaunchScope();
+        if (!scope) { this.focusedPlayCache = undefined; return; }
+        const { main, doc, route } = scope, active = doc.activeElement;
+        if (!this.isElementNode(active) || active === doc.body || active === doc.documentElement) return;
+        // textContent/attributes do not force Steam's layout. Revalidate all
+        // foreground/menu/game guards above, then reuse only this exact node.
+        const shape = element => element ? [String(element.textContent || "").slice(0, 128), element.tagName,
+            element.getAttribute("aria-label"), element.getAttribute("title"), element.getAttribute("role"),
+            element.getAttribute("href"), element.getAttribute("aria-disabled"), element.getAttribute("disabled"),
+            element.className?.toString?.() ?? ""].join("|") : "";
+        const candidates = this.getCandidateElements(active, []);
+        const signature = [shape(active), ...candidates.map(shape)].join(";");
+        const old = this.focusedPlayCache;
+        if (this.hasBlockedContext(active) || candidates.some(element => this.hasBlockedContext(element))
+            || (old?.result && this.hasBlockedContext(old.result))) {
+            this.focusedPlayCache = undefined;
+            return;
+        }
+        if (old?.main === main && old.doc === doc && old.route === route && old.active === active
+            && old.signature === signature && old.resultSignature === shape(old.result)
+            && (!old.result || old.result.isConnected)) return old.result;
+        let result;
+        if (this.isPlayButtonEvent(active, [])) result = active;
+        else {
+            let parent = active.parentElement;
+            for (let depth = 0; parent && depth < 5; depth += 1) {
+                if (this.isPlayButtonEvent(parent, [])) { result = parent; break; }
+                parent = parent.parentElement;
+            }
+        }
+        this.focusedPlayCache = { main, doc, route, active, signature, result, resultSignature: shape(result) };
+        return result;
     }
     visibleSteamAttentionPrompt() {
         const selector = this.postPlayPromptSelector();
@@ -2419,6 +3056,9 @@ class PlayButtonLaunchHook {
                 if (actions.length <= 0 || actions.length > 10) {
                     continue;
                 }
+                // A source-bound native progress popup is distinct from an attention prompt.
+                // Unknown UI, required input and every foreign launch keep the normal yield.
+                if (this.nativeLaunchProgress?.allow(prompt, actions) === true) continue;
                 const text = (prompt.innerText || prompt.textContent || "").replace(/\s+/g, " ").trim();
                 const labels = actions.flatMap((item) => this.getLabels(item)).join(" ");
                 if (POST_PLAY_CONFIRM_PATTERN.test(`${text} ${labels}`) || (text.length >= 10 && text.length <= 1800 && actions.length <= 4)) {
@@ -2522,6 +3162,14 @@ class PlayButtonLaunchHook {
                 return;
             }
             const confirmPressed = this.gamepadButtonPressed([0]);
+            if (!this.mainGamepadLaunchScope()) {
+                this.gamepadLaunchPressed = confirmPressed;
+                this.gamepadLaunchArmedButton = undefined;
+                this.gamepadLaunchArmedAppId = undefined;
+                this.focusedPlayCache = undefined;
+                this.gamepadLaunchTimer = window.setTimeout(poll, 200);
+                return;
+            }
             const focusedPlayButton = this.currentFocusedPlayButton();
             const focusedPlayAppId = focusedPlayButton
                 ? this.findAppIdForEvent(focusedPlayButton, this.parentPath(focusedPlayButton))

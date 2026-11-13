@@ -44,6 +44,15 @@ a personal API key supplied by the user. Launch Curtain does not bundle an API k
 SteamGridDB artwork and service content are third-party content and are not relicensed
 by Launch Curtain.
 
+CPython difflib compatibility
+----------------------------
+vendor/difflib.py is the unmodified CPython 3.11.9 standard-library module.
+It is used only when Windows Decky's frozen runtime omits difflib, preserving
+the existing title-matching behavior. Copyright Python Software Foundation
+and the other copyright holders listed in vendor/PYTHON-LICENSE.txt.
+Source: https://github.com/python/cpython/blob/v3.11.9/Lib/difflib.py
+The complete Python license and historical notices accompany the module.
+
     SteamGridDB
     https://www.steamgriddb.com/
     API: https://www.steamgriddb.com/api/v2
