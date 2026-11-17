@@ -1,14 +1,6 @@
-2.5.9
+3.0.0
 
-Fixed launch coverage and game focus handoff. Reduced unnecessary work on game pages and fully cleared the loading screen after launch.
-
-2.5.8
-
-Fixed game tracking through launchers and wrappers, and loading-screen focus handoff. The loading screen now yields when you switch to another window.
-
-2.5.7
-
-Fixed Launch Curtain failing to load on Windows Decky builds without the difflib module.
+Added support for Playhub 3.0.0.
 
 2.5.6
 

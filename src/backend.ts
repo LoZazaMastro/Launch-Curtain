@@ -4,7 +4,6 @@ import { callable } from "./decky";
 const getSettings = callable("get_settings");
 const saveSettings = callable("save_settings");
 const getStatus = callable("get_status");
-const observeModernSource = callable("observe_modern_source");
 const debugLog = callable("debug_log");
 const hideCurtain = callable("hide_curtain");
 const showBlackCover = callable("show_black_cover");
@@ -45,4 +44,4 @@ const stopAutoMode = callable("stop_auto_mode");
 const FILE_SELECTION_FILE = 0;
 const FILE_SELECTION_FOLDER = 1;
 
-export { observeModernSource, getSettings, saveSettings, getStatus, debugLog, hideCurtain, showBlackCover, hideBlackCover, setNativePromptVisible, launchRequested, resolveGameLogo, getGameSettings, saveGameSettings, resetGameSettings, validateLaunchImagePath, getImagePreview, searchPlayStationGames, getPlayStationBackgrounds, applyPlayStationAsset, removePlayStationAsset, searchGoogleImages, downloadGoogleImage, searchIidbSoundbites, validateSoundbitePath, getSoundbitePreview, soundbiteRuntimeStarted, soundbiteRuntimeFinished, importLocalSoundbite, downloadIidbSoundbite, clearSoundbite, applyIidbSoundbite, removeIidbSoundbite, applyIidbAsset, removeIidbAsset, buildGameCache, cleanupUnusedLaunchImages, cleanupUnusedSoundbites, createBackup, restoreBackup, startAutoMode, stopAutoMode, FILE_SELECTION_FILE, FILE_SELECTION_FOLDER };
+export { getSettings, saveSettings, getStatus, debugLog, hideCurtain, showBlackCover, hideBlackCover, setNativePromptVisible, launchRequested, resolveGameLogo, getGameSettings, saveGameSettings, resetGameSettings, validateLaunchImagePath, getImagePreview, searchPlayStationGames, getPlayStationBackgrounds, applyPlayStationAsset, removePlayStationAsset, searchGoogleImages, downloadGoogleImage, searchIidbSoundbites, validateSoundbitePath, getSoundbitePreview, soundbiteRuntimeStarted, soundbiteRuntimeFinished, importLocalSoundbite, downloadIidbSoundbite, clearSoundbite, applyIidbSoundbite, removeIidbSoundbite, applyIidbAsset, removeIidbAsset, buildGameCache, cleanupUnusedLaunchImages, cleanupUnusedSoundbites, createBackup, restoreBackup, startAutoMode, stopAutoMode, FILE_SELECTION_FILE, FILE_SELECTION_FOLDER };

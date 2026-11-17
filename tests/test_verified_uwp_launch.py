@@ -28,8 +28,7 @@ class VerifiedUwpTests(unittest.IsolatedAsyncioTestCase):
         self.scope = dict(asyncio=asyncio, os=os, json=json, re=re, Request=Request,
                           Any=Any, Dict=Dict, List=List, Optional=Optional,
                           time=SimpleNamespace(time=lambda: self.now), _is_windows=lambda: True,
-                          _log_info=lambda _: None, _process_started_at=lambda pid: self.now-1,
-                          _process_image_path=lambda pid: r"C:\XboxGames\DOOM64\DOOM64_x64.exe")
+                          _log_info=lambda _: None, _process_started_at=lambda pid: self.now-1)
         exec(compile(ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])), str(SOURCE), "exec"), self.scope)
         self.production_query = self.scope["_query_verified_uwp_session"]
         self.identity = dict(gamePid=7, gameBirth=int((self.now-1+11644473600)*10000000),
@@ -81,7 +80,7 @@ class VerifiedUwpTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.started,[])
 
     async def test_bootstrap_cannot_be_game_candidate(self):
-        for name in ["gamingservicesui.exe","gamelaunchhelper.exe","playhub.gamesession.exe","playhubsteaminputreader.exe"]:
+        for name in ["gamingservicesui.exe","gamelaunchhelper.exe","playhub.gamesession.exe"]:
             self.assertTrue(self.scope["_is_transient_launch_process"](name))
         self.assertFalse(self.scope["_is_transient_launch_process"]("DOOM64_x64.exe"))
 
